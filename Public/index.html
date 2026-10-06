@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>LiveBridge</title>
+  <style>
+    :root{color-scheme:dark;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+    body{margin:0;background:#0b0d12;color:#f4f6fb}
+    main{max-width:760px;margin:0 auto;padding:28px 18px}
+    h1{margin:0 0 6px;font-size:28px}
+    .muted{color:#9da5b5}
+    .card{background:#141821;border:1px solid #252b38;border-radius:16px;padding:18px;margin-top:18px}
+    label{display:block;margin:14px 0 7px;font-weight:600}
+    input,textarea,select{box-sizing:border-box;width:100%;padding:12px;border-radius:10px;border:1px solid #343b4a;background:#0e1118;color:#fff;font-size:16px}
+    textarea{min-height:90px;resize:vertical}
+    button{border:0;border-radius:10px;padding:13px 17px;font-size:16px;font-weight:700;cursor:pointer}
+    .primary{background:#6d43ff;color:white}
+    .danger{background:#b52f3d;color:white}
+    .row{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
+    .status{font-weight:700}
+    pre{white-space:pre-wrap;word-break:break-word;max-height:330px;overflow:auto;background:#090b10;padding:12px;border-radius:10px;font-size:12px}
+    a{color:#a990ff}
+  </style>
+</head>
+<body>
+<main>
+  <h1>LiveBridge</h1>
+  <div class="muted">Real-time Bilibili LIVE → YouTube vertical LIVE relay</div>
+
+  <div class="card">
+    <div id="authStatus" class="status">Checking YouTube authorization…</div>
+    <div class="row">
+      <a href="/auth/youtube/start">Authorize my YouTube account</a>
+    </div>
+  </div>
+
+  <div class="card">
+    <form id="form">
+      <label for="source">Bilibili LIVE URL</label>
+      <input id="source" required placeholder="https://live.bilibili.com/..." autocomplete="off">
+
+      <label for="title">YouTube Live title</label>
+      <input id="title" value="LiveBridge LIVE" maxlength="100" required>
+
+      <label for="description">Description</label>
+      <textarea id="description" placeholder="Optional"></textarea>
+
+      <label for="privacy">Visibility</label>
+      <select id="privacy">
+        <option value="unlisted">Unlisted — first test</option>
+        <option value="private">Private</option>
+        <option value="public">Public</option>
+      </select>
+
+      <div class="row">
+        <button class="primary" type="submit">START LIVE</button>
+        <button class="danger" id="stop" type="button">STOP</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="card">
+    <div>Status: <span id="status">IDLE</span></div>
+    <div id="link"></div>
+    <pre id="logs">Waiting…</pre>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+
+async function refresh() {
+  try {
+    const r = await fetch("/api/status");
+    const s = await r.json();
+    $("authStatus").textContent = s.authenticated
+      ? "✓ YouTube authorized"
+      : "YouTube not authorized";
+    $("status").textContent = s.status;
+    $("link").innerHTML = s.youtubeUrl
+      ? `<p><a target="_blank" rel="noopener" href="${s.youtubeUrl}">Open YouTube broadcast</a></p>`
+      : "";
+    $("logs").textContent = (s.logs || []).join("\n") || "Waiting…";
+  } catch (e) {
+    $("logs").textContent = "Dashboard error: " + e.message;
+  }
+}
+
+$("form").addEventListener("submit", async e => {
+  e.preventDefault();
+  $("logs").textContent = "Starting…";
+  const r = await fetch("/api/start", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({
+      sourceUrl: $("source").value.trim(),
+      title: $("title").value.trim(),
+      description: $("description").value.trim(),
+      privacy: $("privacy").value
+    })
+  });
+  const data = await r.json();
+  if (!r.ok) $("logs").textContent = data.error || "Start failed.";
+  refresh();
+});
+
+$("stop").addEventListener("click", async () => {
+  await fetch("/api/stop", {method:"POST"});
+  refresh();
+});
+
+refresh();
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>
