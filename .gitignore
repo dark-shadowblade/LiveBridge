@@ -1,6 +1,6 @@
 node_modules/
+accounts.json
 yt-dlp
 .env
 *.log
-tokens/
 .DS_Store
