@@ -3,7 +3,6 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const https = require("https");
-const crypto = require("crypto");
 const { spawn } = require("child_process");
 const { google } = require("googleapis");
 
@@ -25,42 +24,34 @@ const CLIENT_SECRET =
 
 const MAX_STREAM_SECONDS = Math.max(
   60,
-  Number(
-    process.env.MAX_STREAM_SECONDS || 21600
-  )
+  Number(process.env.MAX_STREAM_SECONDS || 21600)
 );
 
 const OAUTH_REDIRECT =
   `${BASE_URL}/auth/youtube/callback`;
 
+/*
+ * IMPORTANT:
+ * youtube = YouTube API
+ * openid/email/profile = Google account information
+ */
 const SCOPES = [
-  "https://www.googleapis.com/auth/youtube"
+  "https://www.googleapis.com/auth/youtube",
+  "openid",
+  "email",
+  "profile"
 ];
 
 
 /* =========================================================
-   FILE STORAGE
+   FILES
 ========================================================= */
 
 const ACCOUNTS_FILE =
-  path.join(
-    __dirname,
-    "accounts.json"
-  );
+  path.join(__dirname, "accounts.json");
 
-
-/* =========================================================
-   RUNTIME STATE
-========================================================= */
-
-let accounts = {};
-
-let active = null;
-
-
-/* =========================================================
-   FFMPEG
-========================================================= */
+const ytDlpPath =
+  path.join(__dirname, "yt-dlp");
 
 const ffmpegBinaryPath =
   path.join(
@@ -68,19 +59,22 @@ const ffmpegBinaryPath =
     "livebridge-ffmpeg"
   );
 
+
+/* =========================================================
+   FFMPEG
+========================================================= */
+
 const FFMPEG_URL =
   "https://github.com/binmgr/ffmpeg/releases/latest/download/ffmpeg-linux-amd64";
 
 
 /* =========================================================
-   YT-DLP
+   RUNTIME
 ========================================================= */
 
-const ytDlpPath =
-  path.join(
-    __dirname,
-    "yt-dlp"
-  );
+let accounts = {};
+
+let active = null;
 
 
 /* =========================================================
@@ -109,14 +103,14 @@ function loadAccounts() {
       )
     ) {
 
-      const raw =
+      const data =
         fs.readFileSync(
           ACCOUNTS_FILE,
           "utf8"
         );
 
       accounts =
-        JSON.parse(raw);
+        JSON.parse(data);
 
       if (
         !accounts ||
@@ -142,6 +136,8 @@ function loadAccounts() {
   }
 }
 
+loadAccounts();
+
 
 /* =========================================================
    SAVE ACCOUNTS
@@ -149,11 +145,11 @@ function loadAccounts() {
 
 function saveAccounts() {
 
-  const tempFile =
+  const temp =
     `${ACCOUNTS_FILE}.tmp`;
 
   fs.writeFileSync(
-    tempFile,
+    temp,
     JSON.stringify(
       accounts,
       null,
@@ -165,21 +161,14 @@ function saveAccounts() {
   );
 
   fs.renameSync(
-    tempFile,
+    temp,
     ACCOUNTS_FILE
   );
 }
 
 
 /* =========================================================
-   INITIAL LOAD
-========================================================= */
-
-loadAccounts();
-
-
-/* =========================================================
-   COOKIE HELPERS
+   COOKIES
 ========================================================= */
 
 function parseCookies(req) {
@@ -201,14 +190,15 @@ function parseCookies(req) {
     }
 
     const key =
-      part
-        .slice(0, index)
-        .trim();
+      part.slice(
+        0,
+        index
+      ).trim();
 
     const value =
-      part
-        .slice(index + 1)
-        .trim();
+      part.slice(
+        index + 1
+      ).trim();
 
     if (!key) {
       continue;
@@ -268,21 +258,17 @@ function getCurrentAccountId(
   const cookies =
     parseCookies(req);
 
-  const id =
+  const selected =
     cookies.lb_account;
 
   if (
-    id &&
-    accounts[id]
+    selected &&
+    accounts[selected]
   ) {
 
-    return id;
+    return selected;
   }
 
-  /*
-   * If there is no cookie yet,
-   * use the first stored account.
-   */
   const first =
     Object.keys(accounts)[0];
 
@@ -291,7 +277,7 @@ function getCurrentAccountId(
 
 
 /* =========================================================
-   LOGGING
+   LOG
 ========================================================= */
 
 function log(message) {
@@ -360,7 +346,7 @@ function getOAuthClient() {
 
 
 /* =========================================================
-   DOWNLOAD FILE
+   DOWNLOAD
 ========================================================= */
 
 function downloadFile(
@@ -387,9 +373,6 @@ function downloadFile(
           },
           (response) => {
 
-            /*
-             * Follow redirects.
-             */
             if (
               response.statusCode >= 300 &&
               response.statusCode < 400 &&
@@ -430,7 +413,7 @@ function downloadFile(
 
               reject(
                 new Error(
-                  `Download HTTP ${response.statusCode} from ${url}`
+                  `Download HTTP ${response.statusCode}`
                 )
               );
 
@@ -475,7 +458,7 @@ function downloadFile(
 
 
 /* =========================================================
-   ENSURE FFMPEG
+   FFMPEG
 ========================================================= */
 
 async function ensureFFmpeg() {
@@ -500,8 +483,7 @@ async function ensureFFmpeg() {
   ) {
 
     throw new Error(
-      `Unsupported CPU architecture: ${process.arch}. ` +
-      `This FFmpeg build requires x86_64.`
+      `Unsupported CPU architecture: ${process.arch}`
     );
   }
 
@@ -541,7 +523,7 @@ async function ensureFFmpeg() {
 
 
 /* =========================================================
-   TEST FFMPEG
+   FFMPEG TEST
 ========================================================= */
 
 async function testFFmpeg(
@@ -650,7 +632,7 @@ async function testFFmpeg(
 
 
 /* =========================================================
-   ENSURE YT-DLP
+   YT-DLP
 ========================================================= */
 
 async function ensureYtDlp() {
@@ -670,12 +652,8 @@ async function ensureYtDlp() {
   );
 
 
-  const url =
-    "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux";
-
-
   await downloadFile(
-    url,
+    "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux",
     ytDlpPath
   );
 
@@ -696,7 +674,7 @@ async function ensureYtDlp() {
 
 
 /* =========================================================
-   BILIBILI RESOLVER
+   BILIBILI RESOLVE WITH YT-DLP
 ========================================================= */
 
 async function resolveLiveUrl(
@@ -812,10 +790,12 @@ async function resolveLiveUrl(
 
 
           resolve({
+
             url:
               urls[0],
 
             headers: {
+
               Referer:
                 sourceUrl,
 
@@ -831,7 +811,7 @@ async function resolveLiveUrl(
 
 
 /* =========================================================
-   HTTP JSON
+   JSON HTTP
 ========================================================= */
 
 function httpGetJson(
@@ -847,6 +827,7 @@ function httpGetJson(
           url,
           {
             headers: {
+
               "User-Agent":
                 USER_AGENT,
 
@@ -859,7 +840,6 @@ function httpGetJson(
           (response) => {
 
             let body = "";
-
 
             response.setEncoding(
               "utf8"
@@ -887,8 +867,7 @@ function httpGetJson(
 
                   reject(
                     new Error(
-                      `HTTP ${response.statusCode}: ` +
-                      `${body.slice(0, 300)}`
+                      `HTTP ${response.statusCode}`
                     )
                   );
 
@@ -908,7 +887,7 @@ function httpGetJson(
 
                   reject(
                     new Error(
-                      `Invalid JSON from ${url}`
+                      "Invalid JSON response."
                     )
                   );
                 }
@@ -928,7 +907,7 @@ function httpGetJson(
 
 
 /* =========================================================
-   ROOM ID
+   BILIBILI ROOM ID
 ========================================================= */
 
 function getRoomId(
@@ -939,6 +918,7 @@ function getRoomId(
     sourceUrl.match(
       /live\.bilibili\.com\/(?:blanc\/)?(\d+)/i
     );
+
 
   return match
     ? match[1]
@@ -989,7 +969,7 @@ async function resolveWithBilibiliApi(
 
     throw new Error(
       room.message ||
-      `Bilibili room API error ${room.code}`
+      "Bilibili room API error."
     );
   }
 
@@ -1113,10 +1093,9 @@ async function resolveWithBilibiliApi(
             codec.url_info ||
             []
           ).find(
-            (x) =>
-              x.host &&
-              codec.base_url &&
-              x.extra !== undefined
+            (item) =>
+              item.host &&
+              codec.base_url
           );
 
 
@@ -1128,7 +1107,7 @@ async function resolveWithBilibiliApi(
         const directUrl =
           `${urlInfo.host}` +
           `${codec.base_url}` +
-          `${urlInfo.extra}`;
+          `${urlInfo.extra || ""}`;
 
 
         log(
@@ -1162,7 +1141,7 @@ async function resolveWithBilibiliApi(
 
 
 /* =========================================================
-   RESOLVE LIVE STREAM
+   RESOLVE STREAM
 ========================================================= */
 
 async function resolveLiveStream(
@@ -1195,7 +1174,8 @@ async function resolveLiveStream(
 
 
 /* =========================================================
-   ACCOUNT INFORMATION
+   GET YOUTUBE ACCOUNT INFO
+   FIXED VERSION
 ========================================================= */
 
 async function getAccountInfo(
@@ -1211,26 +1191,13 @@ async function getAccountInfo(
   );
 
 
-  const oauth2 =
-    google.oauth2({
-      auth,
-      version: "v2"
-    });
-
-
-  const userResponse =
-    await oauth2.userinfo.get();
-
-
-  const user =
-    userResponse.data;
-
-
   /*
-   * Get YouTube channel information.
+   * Use YouTube API first.
+   * This does NOT depend on userinfo.
    */
   const youtube =
     google.youtube({
+
       version:
         "v3",
 
@@ -1238,50 +1205,94 @@ async function getAccountInfo(
     });
 
 
-  let channels = [];
+  const channelResponse =
+    await youtube.channels.list({
+
+      part:
+        "id,snippet",
+
+      mine:
+        true
+    });
 
 
+  const channels =
+    channelResponse.data.items ||
+    [];
+
+
+  if (
+    !channels.length
+  ) {
+
+    throw new Error(
+      "Google authorization succeeded, but no YouTube channel was found for this account."
+    );
+  }
+
+
+  const channel =
+    channels[0];
+
+
+  /*
+   * Default information comes from YouTube.
+   */
+  let email = "";
+
+  let name =
+    channel.snippet?.title ||
+    "YouTube account";
+
+  let picture =
+    channel.snippet
+      ?.thumbnails
+      ?.default
+      ?.url ||
+    null;
+
+
+  /*
+   * Google profile lookup is optional.
+   *
+   * If it fails, OAuth still succeeds.
+   */
   try {
 
-    const channelResponse =
-      await youtube.channels.list({
+    const oauth2 =
+      google.oauth2({
 
-        part:
-          "id,snippet",
+        auth,
 
-        mine:
-          true
+        version:
+          "v2"
       });
 
 
-    channels =
-      (
-        channelResponse.data.items ||
-        []
-      ).map(
-        (channel) => ({
+    const userResponse =
+      await oauth2.userinfo.get();
 
-          id:
-            channel.id,
 
-          title:
-            channel.snippet
-              ?.title ||
-            "YouTube channel",
+    const user =
+      userResponse.data;
 
-          thumbnail:
-            channel.snippet
-              ?.thumbnails
-              ?.default
-              ?.url ||
-            null
-        })
-      );
+
+    email =
+      user.email ||
+      "";
+
+    name =
+      user.name ||
+      name;
+
+    picture =
+      user.picture ||
+      picture;
 
   } catch (error) {
 
-    console.error(
-      "Could not load YouTube channels:",
+    console.log(
+      "Google profile lookup skipped:",
       error.message
     );
   }
@@ -1289,29 +1300,45 @@ async function getAccountInfo(
 
   return {
 
+    /*
+     * YouTube channel ID is the
+     * stable LiveBridge account ID.
+     */
     id:
-      user.id,
+      channel.id,
 
-    email:
-      user.email ||
-      "",
+    email,
 
-    name:
-      user.name ||
-      user.email ||
-      "YouTube account",
+    name,
 
-    picture:
-      user.picture ||
-      null,
+    picture,
 
-    channels
+    channels:
+      channels.map(
+        (item) => ({
+
+          id:
+            item.id,
+
+          title:
+            item.snippet
+              ?.title ||
+            "YouTube channel",
+
+          thumbnail:
+            item.snippet
+              ?.thumbnails
+              ?.default
+              ?.url ||
+            null
+        })
+      )
   };
 }
 
 
 /* =========================================================
-   SAVE / UPDATE ACCOUNT
+   SAVE ACCOUNT
 ========================================================= */
 
 async function saveOAuthAccount(
@@ -1329,7 +1356,8 @@ async function saveOAuthAccount(
 
 
   const existing =
-    accounts[accountId] || {};
+    accounts[accountId] ||
+    {};
 
 
   accounts[accountId] = {
@@ -1352,8 +1380,8 @@ async function saveOAuthAccount(
     tokens: {
 
       /*
-       * Keep existing refresh token if Google
-       * does not send a new one.
+       * Preserve old refresh token if Google
+       * doesn't send a new one.
        */
       ...existing.tokens,
 
@@ -1373,7 +1401,7 @@ async function saveOAuthAccount(
 
 
 /* =========================================================
-   OAUTH CLIENT FOR ACCOUNT
+   AUTH CLIENT FOR SAVED ACCOUNT
 ========================================================= */
 
 function getAuthForAccount(
@@ -1384,9 +1412,7 @@ function getAuthForAccount(
     accounts[accountId];
 
 
-  if (
-    !account
-  ) {
+  if (!account) {
 
     throw new Error(
       "YouTube account not found."
@@ -1404,8 +1430,7 @@ function getAuthForAccount(
 
 
   /*
-   * Google may refresh the access token.
-   * Save the updated token information.
+   * Save refreshed access token.
    */
   auth.on(
     "tokens",
@@ -1427,7 +1452,9 @@ function getAuthForAccount(
 
 
         try {
+
           saveAccounts();
+
         } catch (error) {
 
           console.error(
@@ -1477,9 +1504,6 @@ async function createYouTubeBroadcast(
     ).toISOString();
 
 
-  /*
-   * Broadcast.
-   */
   const broadcastResponse =
     await youtube.liveBroadcasts.insert({
 
@@ -1498,7 +1522,8 @@ async function createYouTubeBroadcast(
 
           description:
             (
-              description || ""
+              description ||
+              ""
             ).slice(
               0,
               5000
@@ -1541,9 +1566,6 @@ async function createYouTubeBroadcast(
     broadcastResponse.data;
 
 
-  /*
-   * Ingestion stream.
-   */
   const streamResponse =
     await youtube.liveStreams.insert({
 
@@ -1588,9 +1610,6 @@ async function createYouTubeBroadcast(
     streamResponse.data;
 
 
-  /*
-   * Bind.
-   */
   await youtube.liveBroadcasts.bind({
 
     part:
@@ -1689,7 +1708,7 @@ function startRelay(
 
 
     /*
-     * Vertical output.
+     * 9:16 vertical.
      */
     "-vf",
 
@@ -1729,9 +1748,6 @@ function startRelay(
     "5000k",
 
 
-    /*
-     * 2-second keyframes.
-     */
     "-g",
     "60",
 
@@ -1795,9 +1811,7 @@ function startRelay(
     (data) => {
 
       const text =
-        data
-          .toString()
-          .trim();
+        data.toString().trim();
 
       if (text) {
 
@@ -1814,9 +1828,7 @@ function startRelay(
     (data) => {
 
       const text =
-        data
-          .toString()
-          .trim();
+        data.toString().trim();
 
       if (text) {
 
@@ -1950,7 +1962,7 @@ app.get(
 
 
 /* =========================================================
-   ACCOUNTS API
+   ACCOUNTS
 ========================================================= */
 
 app.get(
@@ -2030,10 +2042,6 @@ app.post(
     }
 
 
-    /*
-     * Don't allow account switching while
-     * a relay is running.
-     */
     if (
       active &&
       [
@@ -2175,10 +2183,6 @@ app.get(
         : null;
 
 
-    /*
-     * If cookie didn't exist yet,
-     * establish it now.
-     */
     if (
       accountId &&
       parseCookies(req).lb_account !==
@@ -2274,8 +2278,7 @@ app.get(
 
 
     /*
-     * Always show Google's account chooser
-     * when adding an account.
+     * Always show Google account chooser.
      */
     const url =
       client.generateAuthUrl({
@@ -2335,8 +2338,7 @@ app.get(
 
 
       /*
-       * Find the Google account and
-       * its YouTube information.
+       * Identify the YouTube channel.
        */
       const account =
         await saveOAuthAccount(
@@ -2345,8 +2347,8 @@ app.get(
 
 
       /*
-       * Make newly authorized account
-       * the selected account.
+       * Automatically select the
+       * newly-added account.
        */
       setAccountCookie(
         res,
@@ -2355,7 +2357,10 @@ app.get(
 
 
       console.log(
-        `YouTube account authorized: ${account.email}`
+        `YouTube account authorized: ${
+          account.email ||
+          account.name
+        }`
       );
 
 
@@ -2389,9 +2394,6 @@ app.post(
   "/api/start",
   async (req, res) => {
 
-    /*
-     * Don't allow two simultaneous relays.
-     */
     if (
       active &&
       [
@@ -2412,9 +2414,6 @@ app.post(
     }
 
 
-    /*
-     * Get selected account.
-     */
     const accountId =
       getCurrentAccountId(
         req
@@ -2514,8 +2513,7 @@ app.post(
       broadcastId:
         null,
 
-      accountId:
-        accountId
+      accountId
     };
 
 
@@ -2526,24 +2524,21 @@ app.post(
     });
 
 
-    /*
-     * Run asynchronously.
-     */
     (async () => {
 
       try {
 
-        /* -----------------------------------------
-           FFMPEG
-        ----------------------------------------- */
-
         log(
           `Using YouTube account: ${
-            accounts[accountId].email
+            accounts[accountId].email ||
+            accounts[accountId].name
           }`
         );
 
 
+        /*
+         * FFmpeg first.
+         */
         log(
           "Checking FFmpeg runtime..."
         );
@@ -2558,10 +2553,9 @@ app.post(
         );
 
 
-        /* -----------------------------------------
-           BILIBILI
-        ----------------------------------------- */
-
+        /*
+         * Bilibili.
+         */
         log(
           "Resolving currently-live Bilibili stream..."
         );
@@ -2578,10 +2572,9 @@ app.post(
         );
 
 
-        /* -----------------------------------------
-           YOUTUBE
-        ----------------------------------------- */
-
+        /*
+         * YouTube.
+         */
         log(
           "Creating YouTube broadcast and ingestion stream..."
         );
@@ -2611,10 +2604,9 @@ app.post(
         );
 
 
-        /* -----------------------------------------
-           RELAY
-        ----------------------------------------- */
-
+        /*
+         * Relay.
+         */
         active.status =
           "LIVE";
 
@@ -2636,16 +2628,16 @@ app.post(
         );
 
 
-        /* -----------------------------------------
-           MAX DURATION
-        ----------------------------------------- */
-
+        /*
+         * Maximum duration.
+         */
         setTimeout(
           () => {
 
             if (
               active &&
-              active.status === "LIVE"
+              active.status ===
+                "LIVE"
             ) {
 
               log(
@@ -2684,7 +2676,7 @@ app.post(
 
 
 /* =========================================================
-   STOP LIVE
+   STOP
 ========================================================= */
 
 app.post(
