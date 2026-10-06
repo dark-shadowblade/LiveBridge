@@ -22,7 +22,8 @@ const MAX_STREAM_SECONDS = Math.max(
   Number(process.env.MAX_STREAM_SECONDS || 21600)
 );
 
-const OAUTH_REDIRECT = `${BASE_URL}/auth/youtube/callback`;
+const OAUTH_REDIRECT =
+  `${BASE_URL}/auth/youtube/callback`;
 
 const SCOPES = [
   "https://www.googleapis.com/auth/youtube"
@@ -31,34 +32,45 @@ const SCOPES = [
 let oauthTokens = null;
 let active = null;
 
-const ytDlpPath = path.join(__dirname, "yt-dlp");
 
-const ffmpegDir = path.join(os.tmpdir(), "livebridge-ffmpeg");
-const ffmpegArchive = path.join(
-  os.tmpdir(),
-  "livebridge-ffmpeg.tar.xz"
-);
+/* =========================================================
+   PATHS
+========================================================= */
 
-const ffmpegBinaryPath = path.join(
-  ffmpegDir,
-  "ffmpeg"
-);
+const ytDlpPath =
+  path.join(__dirname, "yt-dlp");
 
-/*
- * Fixed known-good Linux x86_64 static build.
- *
- * Infrlo is running a Linux x86_64 environment.
- */
+const ffmpegBinaryPath =
+  path.join(
+    os.tmpdir(),
+    "livebridge-ffmpeg"
+  );
+
+
+/* =========================================================
+   DIRECT FFMPEG DOWNLOAD
+   No tar
+   No xz
+   No ffmpeg-static
+========================================================= */
+
 const FFMPEG_URL =
-  "https://www.johnvansickle.com/ffmpeg/old-releases/ffmpeg-6.0.1-amd64-static.tar.xz";
+  "https://github.com/binmgr/ffmpeg/releases/latest/download/ffmpeg-linux-amd64";
 
 
-function log(msg) {
-  const line = `[${new Date().toISOString()}] ${msg}`;
+/* =========================================================
+   LOGGING
+========================================================= */
+
+function log(message) {
+
+  const line =
+    `[${new Date().toISOString()}] ${message}`;
 
   console.log(line);
 
   if (active) {
+
     active.logs.push(line);
 
     if (active.logs.length > 300) {
@@ -68,7 +80,12 @@ function log(msg) {
 }
 
 
+/* =========================================================
+   CONFIG
+========================================================= */
+
 function ensureConfig() {
+
   const missing = [];
 
   if (!BASE_URL) {
@@ -87,7 +104,12 @@ function ensureConfig() {
 }
 
 
+/* =========================================================
+   GOOGLE OAUTH
+========================================================= */
+
 function getOAuthClient() {
+
   return new google.auth.OAuth2(
     CLIENT_ID,
     CLIENT_SECRET,
@@ -96,437 +118,514 @@ function getOAuthClient() {
 }
 
 
-/*
- * Download helper with redirect support.
- */
-function downloadFile(url, destination) {
-  return new Promise((resolve, reject) => {
-    const file = fs.createWriteStream(destination);
+/* =========================================================
+   DOWNLOAD FILE
+   Handles GitHub redirects
+========================================================= */
 
-    const request = https.get(url, (res) => {
+function downloadFile(
+  url,
+  destination
+) {
 
-      if (
-        res.statusCode >= 300 &&
-        res.statusCode < 400 &&
-        res.headers.location
-      ) {
-        file.close();
+  return new Promise(
+    (resolve, reject) => {
 
-        try {
-          fs.unlinkSync(destination);
-        } catch (_) {}
-
-        return downloadFile(
-          res.headers.location,
+      const file =
+        fs.createWriteStream(
           destination
-        ).then(resolve, reject);
-      }
-
-      if (res.statusCode !== 200) {
-        file.close();
-
-        try {
-          fs.unlinkSync(destination);
-        } catch (_) {}
-
-        reject(
-          new Error(
-            `Download HTTP ${res.statusCode} from ${url}`
-          )
         );
 
-        return;
-      }
+      const request =
+        https.get(
+          url,
+          (response) => {
 
-      res.pipe(file);
+            /*
+             * GitHub releases normally redirect.
+             */
+            if (
+              response.statusCode >= 300 &&
+              response.statusCode < 400 &&
+              response.headers.location
+            ) {
 
-      file.on("finish", () => {
-        file.close(() => resolve());
-      });
-    });
+              file.close();
 
-    request.on("error", (err) => {
-      file.close();
+              try {
+                fs.unlinkSync(
+                  destination
+                );
+              } catch (_) {}
 
-      try {
-        fs.unlinkSync(destination);
-      } catch (_) {}
+              return downloadFile(
+                response.headers.location,
+                destination
+              )
+                .then(resolve)
+                .catch(reject);
+            }
 
-      reject(err);
-    });
-  });
-}
+
+            if (
+              response.statusCode !== 200
+            ) {
+
+              file.close();
+
+              try {
+                fs.unlinkSync(
+                  destination
+                );
+              } catch (_) {}
+
+              reject(
+                new Error(
+                  `Download HTTP ${response.statusCode} from ${url}`
+                )
+              );
+
+              return;
+            }
 
 
-/*
- * Recursively find a file.
- */
-function findFileRecursive(directory, filename) {
-  if (!fs.existsSync(directory)) {
-    return null;
-  }
+            response.pipe(file);
 
-  const entries = fs.readdirSync(directory, {
-    withFileTypes: true
-  });
 
-  for (const entry of entries) {
-    const fullPath = path.join(
-      directory,
-      entry.name
-    );
+            file.on(
+              "finish",
+              () => {
 
-    if (entry.isDirectory()) {
-      const found = findFileRecursive(
-        fullPath,
-        filename
+                file.close(
+                  () => resolve()
+                );
+              }
+            );
+          }
+        );
+
+
+      request.on(
+        "error",
+        (error) => {
+
+          file.close();
+
+          try {
+            fs.unlinkSync(
+              destination
+            );
+          } catch (_) {}
+
+          reject(error);
+        }
       );
-
-      if (found) {
-        return found;
-      }
     }
-
-    if (
-      entry.isFile() &&
-      entry.name === filename
-    ) {
-      return fullPath;
-    }
-  }
-
-  return null;
+  );
 }
 
 
-/*
- * Download and prepare standalone FFmpeg.
- */
+/* =========================================================
+   ENSURE FFMPEG
+   Direct binary — no archive extraction
+========================================================= */
+
 async function ensureFFmpeg() {
 
-  if (fs.existsSync(ffmpegBinaryPath)) {
+  /*
+   * Already downloaded.
+   */
+  if (
+    fs.existsSync(
+      ffmpegBinaryPath
+    )
+  ) {
+
+    fs.chmodSync(
+      ffmpegBinaryPath,
+      0o755
+    );
+
     return ffmpegBinaryPath;
   }
 
+
   /*
-   * If we already extracted the archive but the
-   * executable is in a versioned directory, find it.
+   * This build is for Linux x86_64.
    */
-  if (fs.existsSync(ffmpegDir)) {
+  if (
+    process.arch !== "x64"
+  ) {
 
-    const existing = findFileRecursive(
-      ffmpegDir,
-      "ffmpeg"
-    );
-
-    if (existing) {
-      fs.chmodSync(existing, 0o755);
-      return existing;
-    }
-  }
-
-  if (process.arch !== "x64") {
     throw new Error(
       `Unsupported CPU architecture: ${process.arch}. ` +
-      `This FFmpeg build requires x86_64.`
+      `This LiveBridge FFmpeg build requires x86_64.`
     );
   }
 
-  log("Preparing standalone FFmpeg...");
-  log(`FFmpeg architecture: ${process.arch}`);
 
-  if (!fs.existsSync(ffmpegDir)) {
-    fs.mkdirSync(ffmpegDir, {
-      recursive: true
-    });
-  }
-
-  if (!fs.existsSync(ffmpegArchive)) {
-    log("Downloading standalone FFmpeg (~39 MB)...");
-
-    await downloadFile(
-      FFMPEG_URL,
-      ffmpegArchive
-    );
-
-    log("FFmpeg download completed.");
-  }
-
-  log("Extracting standalone FFmpeg...");
-
-  await new Promise((resolve, reject) => {
-
-    const tar = spawn(
-      "tar",
-      [
-        "-xJf",
-        ffmpegArchive,
-        "-C",
-        ffmpegDir
-      ],
-      {
-        stdio: ["ignore", "pipe", "pipe"]
-      }
-    );
-
-    let stderr = "";
-
-    tar.stderr.on("data", (data) => {
-      stderr += data.toString();
-    });
-
-    tar.on("error", reject);
-
-    tar.on("close", (code) => {
-
-      if (code !== 0) {
-        reject(
-          new Error(
-            `tar extraction failed with code ${code}: ${stderr}`
-          )
-        );
-
-        return;
-      }
-
-      resolve();
-    });
-  });
-
-  const found = findFileRecursive(
-    ffmpegDir,
-    "ffmpeg"
+  log(
+    "Preparing standalone FFmpeg..."
   );
 
-  if (!found) {
-    throw new Error(
-      "FFmpeg binary was not found after extraction."
-    );
-  }
+  log(
+    `FFmpeg architecture: ${process.arch}`
+  );
 
-  fs.chmodSync(found, 0o755);
+  log(
+    "Downloading standalone FFmpeg binary..."
+  );
 
-  log(`FFmpeg binary ready: ${found}`);
 
-  return found;
+  await downloadFile(
+    FFMPEG_URL,
+    ffmpegBinaryPath
+  );
+
+
+  /*
+   * Make executable.
+   */
+  fs.chmodSync(
+    ffmpegBinaryPath,
+    0o755
+  );
+
+
+  log(
+    `FFmpeg binary ready: ${ffmpegBinaryPath}`
+  );
+
+
+  return ffmpegBinaryPath;
 }
 
 
-/*
- * Test FFmpeg BEFORE creating a YouTube broadcast.
- *
- * This prevents creating a "Waiting" broadcast when
- * FFmpeg itself cannot run.
- */
-async function testFFmpeg(ffmpegPath) {
+/* =========================================================
+   TEST FFMPEG
+   This happens BEFORE YouTube broadcast creation.
+========================================================= */
 
-  log("Testing FFmpeg binary...");
+async function testFFmpeg(
+  ffmpegPath
+) {
 
-  return new Promise((resolve, reject) => {
+  log(
+    "Testing FFmpeg binary..."
+  );
 
-    const child = spawn(
-      ffmpegPath,
-      [
-        "-hide_banner",
-        "-version"
-      ],
-      {
-        stdio: [
-          "ignore",
-          "pipe",
-          "pipe"
-        ]
-      }
-    );
 
-    let output = "";
-    let errorOutput = "";
+  return new Promise(
+    (resolve, reject) => {
 
-    child.stdout.on("data", (data) => {
-      output += data.toString();
-    });
+      const child =
+        spawn(
+          ffmpegPath,
+          [
+            "-hide_banner",
+            "-version"
+          ],
+          {
+            stdio: [
+              "ignore",
+              "pipe",
+              "pipe"
+            ]
+          }
+        );
 
-    child.stderr.on("data", (data) => {
-      errorOutput += data.toString();
-    });
 
-    child.on("error", (err) => {
-      reject(
-        new Error(
-          `FFmpeg could not start: ${err.message}`
-        )
+      let stdout = "";
+      let stderr = "";
+
+
+      child.stdout.on(
+        "data",
+        (data) => {
+
+          stdout +=
+            data.toString();
+        }
       );
-    });
 
-    child.on("close", (code, signal) => {
 
-      if (code === 0) {
-        const firstLine =
-          output
-            .split(/\r?\n/)
-            .find(Boolean) ||
-          "FFmpeg started successfully.";
+      child.stderr.on(
+        "data",
+        (data) => {
 
-        log(`FFmpeg self-test OK: ${firstLine}`);
-
-        resolve();
-        return;
-      }
-
-      reject(
-        new Error(
-          `FFmpeg self-test failed. code=${code} ` +
-          `signal=${signal || "none"} ` +
-          `${errorOutput.trim()}`
-        )
+          stderr +=
+            data.toString();
+        }
       );
-    });
-  });
+
+
+      child.on(
+        "error",
+        (error) => {
+
+          reject(
+            new Error(
+              `FFmpeg could not start: ${error.message}`
+            )
+          );
+        }
+      );
+
+
+      child.on(
+        "close",
+        (code, signal) => {
+
+          if (code === 0) {
+
+            const firstLine =
+              stdout
+                .split(/\r?\n/)
+                .find(Boolean) ||
+              "FFmpeg started successfully.";
+
+            log(
+              `FFmpeg self-test OK: ${firstLine}`
+            );
+
+            resolve();
+
+            return;
+          }
+
+
+          reject(
+            new Error(
+              `FFmpeg self-test failed. ` +
+              `code=${code} ` +
+              `signal=${signal || "none"} ` +
+              `${stderr.trim()}`
+            )
+          );
+        }
+      );
+    }
+  );
 }
 
 
-/*
- * Download yt-dlp standalone.
- */
+/* =========================================================
+   YT-DLP
+========================================================= */
+
 async function ensureYtDlp() {
 
-  if (fs.existsSync(ytDlpPath)) {
+  if (
+    fs.existsSync(
+      ytDlpPath
+    )
+  ) {
+
     return ytDlpPath;
   }
 
-  log("Downloading yt-dlp standalone binary...");
+
+  log(
+    "Downloading yt-dlp standalone binary..."
+  );
+
 
   const url =
     "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux";
+
 
   await downloadFile(
     url,
     ytDlpPath
   );
 
+
   fs.chmodSync(
     ytDlpPath,
     0o755
   );
 
-  log("yt-dlp ready.");
+
+  log(
+    "yt-dlp ready."
+  );
+
 
   return ytDlpPath;
 }
 
 
-/*
- * Resolve currently-live Bilibili media URL.
- */
-async function resolveLiveUrl(sourceUrl) {
+/* =========================================================
+   BILIBILI LIVE URL RESOLVER
+========================================================= */
 
-  const ytdlp = await ensureYtDlp();
+async function resolveLiveUrl(
+  sourceUrl
+) {
 
-  return new Promise((resolve, reject) => {
+  const ytdlp =
+    await ensureYtDlp();
 
-    const args = [
-      "--no-warnings",
-      "--no-playlist",
 
-      "--add-header",
-      "Referer: https://live.bilibili.com/",
+  return new Promise(
+    (resolve, reject) => {
 
-      "--add-header",
-      "User-Agent: Mozilla/5.0 " +
-      "(Windows NT 10.0; Win64; x64) " +
-      "AppleWebKit/537.36 " +
-      "(KHTML, like Gecko) " +
-      "Chrome/140.0.0.0 Safari/537.36",
+      const args = [
 
-      "-f",
-      "best",
+        "--no-warnings",
 
-      "-g",
+        "--no-playlist",
 
-      sourceUrl
-    ];
+        "--add-header",
+        "Referer: https://live.bilibili.com/",
 
-    log("Resolving with yt-dlp...");
+        "--add-header",
+        "User-Agent: Mozilla/5.0 " +
+        "(Windows NT 10.0; Win64; x64) " +
+        "AppleWebKit/537.36 " +
+        "(KHTML, like Gecko) " +
+        "Chrome/140.0.0.0 Safari/537.36",
 
-    const child = spawn(
-      ytdlp,
-      args,
-      {
-        stdio: [
-          "ignore",
-          "pipe",
-          "pipe"
-        ]
-      }
-    );
+        "-f",
+        "best",
 
-    let out = "";
-    let err = "";
+        "-g",
 
-    child.stdout.on("data", (data) => {
-      out += data.toString();
-    });
+        sourceUrl
+      ];
 
-    child.stderr.on("data", (data) => {
-      err += data.toString();
-    });
 
-    child.on("error", reject);
+      log(
+        "Resolving with yt-dlp..."
+      );
 
-    child.on("close", (code) => {
 
-      const urls = out
-        .trim()
-        .split(/\r?\n/)
-        .map((x) => x.trim())
-        .filter(Boolean);
-
-      if (
-        code !== 0 ||
-        urls.length === 0
-      ) {
-
-        reject(
-          new Error(
-            `yt-dlp could not resolve the live stream. ` +
-            `${err.trim()}`
-          )
+      const child =
+        spawn(
+          ytdlp,
+          args,
+          {
+            stdio: [
+              "ignore",
+              "pipe",
+              "pipe"
+            ]
+          }
         );
 
-        return;
-      }
 
-      resolve(urls[0]);
-    });
-  });
+      let output = "";
+      let errorOutput = "";
+
+
+      child.stdout.on(
+        "data",
+        (data) => {
+
+          output +=
+            data.toString();
+        }
+      );
+
+
+      child.stderr.on(
+        "data",
+        (data) => {
+
+          errorOutput +=
+            data.toString();
+        }
+      );
+
+
+      child.on(
+        "error",
+        (error) => {
+
+          reject(error);
+        }
+      );
+
+
+      child.on(
+        "close",
+        (code) => {
+
+          const urls =
+            output
+              .trim()
+              .split(/\r?\n/)
+              .map(
+                (item) =>
+                  item.trim()
+              )
+              .filter(Boolean);
+
+
+          if (
+            code !== 0 ||
+            urls.length === 0
+          ) {
+
+            reject(
+              new Error(
+                `yt-dlp could not resolve the live stream. ` +
+                `${errorOutput.trim()}`
+              )
+            );
+
+            return;
+          }
+
+
+          resolve(
+            urls[0]
+          );
+        }
+      );
+    }
+  );
 }
 
 
-/*
- * Create YouTube broadcast and ingestion stream.
- */
+/* =========================================================
+   YOUTUBE BROADCAST CREATION
+========================================================= */
+
 async function createYouTubeBroadcast(
   title,
   description,
   privacy
 ) {
 
-  const auth = getOAuthClient();
+  const auth =
+    getOAuthClient();
+
 
   auth.setCredentials(
     oauthTokens
   );
 
-  const youtube = google.youtube({
-    version: "v3",
-    auth
-  });
 
+  const youtube =
+    google.youtube({
+      version: "v3",
+      auth
+    });
+
+
+  /*
+   * Schedule a tiny amount into the future.
+   */
   const start =
     new Date(
-      Date.now() + 60_000
+      Date.now() + 60 * 1000
     ).toISOString();
 
+
+  /*
+   * Create broadcast.
+   */
   const broadcastResponse =
     await youtube.liveBroadcasts.insert({
 
@@ -536,38 +635,61 @@ async function createYouTubeBroadcast(
       requestBody: {
 
         snippet: {
-          title: title.slice(0, 100),
+
+          title:
+            title.slice(
+              0,
+              100
+            ),
 
           description:
-            (description || "")
-              .slice(0, 5000),
+            (
+              description || ""
+            ).slice(
+              0,
+              5000
+            ),
 
           scheduledStartTime:
             start,
 
-          categoryId: "24"
+          categoryId:
+            "24"
         },
 
+
         status: {
-          privacyStatus: privacy
+
+          privacyStatus:
+            privacy
         },
+
 
         contentDetails: {
 
-          enableAutoStart: true,
+          enableAutoStart:
+            true,
 
-          enableAutoStop: true,
+          enableAutoStop:
+            true,
 
-          recordFromStart: true,
+          recordFromStart:
+            true,
 
-          enableDvr: true
+          enableDvr:
+            true
         }
       }
     });
 
+
   const broadcast =
     broadcastResponse.data;
 
+
+  /*
+   * Create ingestion stream.
+   */
   const streamResponse =
     await youtube.liveStreams.insert({
 
@@ -577,9 +699,14 @@ async function createYouTubeBroadcast(
       requestBody: {
 
         snippet: {
+
           title:
-            `${title.slice(0, 90)} - LiveBridge`
+            `${title.slice(
+              0,
+              90
+            )} - LiveBridge`
         },
+
 
         cdn: {
 
@@ -593,15 +720,23 @@ async function createYouTubeBroadcast(
             "30fps"
         },
 
+
         contentDetails: {
-          isReusable: false
+
+          isReusable:
+            false
         }
       }
     });
 
+
   const stream =
     streamResponse.data;
 
+
+  /*
+   * Bind broadcast to stream.
+   */
   await youtube.liveBroadcasts.bind({
 
     part:
@@ -613,6 +748,7 @@ async function createYouTubeBroadcast(
     streamId:
       stream.id
   });
+
 
   return {
 
@@ -637,9 +773,10 @@ async function createYouTubeBroadcast(
 }
 
 
-/*
- * Start real-time FFmpeg relay.
- */
+/* =========================================================
+   START FFMPEG RELAY
+========================================================= */
+
 function startRelay(
   sourceUrl,
   ingestionUrl,
@@ -647,11 +784,15 @@ function startRelay(
   ffmpegPath
 ) {
 
-  const input =
+  /*
+   * YouTube RTMPS URL.
+   */
+  const outputUrl =
     `${ingestionUrl}/${streamName}`;
 
+
   /*
-   * Bilibili often expects these headers.
+   * Bilibili HTTP headers.
    */
   const headers =
     "Referer: https://live.bilibili.com/\r\n" +
@@ -661,14 +802,19 @@ function startRelay(
     "(KHTML, like Gecko) " +
     "Chrome/140.0.0.0 Safari/537.36\r\n";
 
+
   /*
-   * 720x1280 keeps CPU requirements reasonable
-   * for the free Infrlo instance.
+   * FFmpeg arguments.
    *
-   * 30 FPS.
-   * H.264.
-   * AAC.
-   * 2-second keyframes.
+   * Source:
+   * Bilibili live stream
+   *
+   * Output:
+   * 720x1280 vertical
+   * H.264
+   * AAC
+   * 30fps
+   * RTMPS
    */
   const args = [
 
@@ -679,9 +825,17 @@ function startRelay(
 
     "-nostdin",
 
+
+    /*
+     * Network timeout.
+     */
     "-rw_timeout",
     "15000000",
 
+
+    /*
+     * Reconnect source if possible.
+     */
     "-reconnect",
     "1",
 
@@ -691,21 +845,44 @@ function startRelay(
     "-reconnect_delay_max",
     "10",
 
+
+    /*
+     * Bilibili request headers.
+     */
     "-headers",
     headers,
 
+
+    /*
+     * Input.
+     */
     "-i",
     sourceUrl,
 
+
+    /*
+     * Vertical 9:16 output.
+     *
+     * The source keeps its aspect ratio.
+     * Empty space is padded.
+     */
     "-vf",
     "scale=720:1280:" +
     "force_original_aspect_ratio=decrease," +
     "pad=720:1280:(ow-iw)/2:(oh-ih)/2," +
     "format=yuv420p",
 
+
+    /*
+     * Video frame rate.
+     */
     "-r",
     "30",
 
+
+    /*
+     * H.264 encoder.
+     */
     "-c:v",
     "libx264",
 
@@ -718,6 +895,10 @@ function startRelay(
     "-pix_fmt",
     "yuv420p",
 
+
+    /*
+     * Video bitrate.
+     */
     "-b:v",
     "2500k",
 
@@ -730,6 +911,10 @@ function startRelay(
     "-bufsize",
     "5000k",
 
+
+    /*
+     * 60 frames = 2 seconds at 30fps.
+     */
     "-g",
     "60",
 
@@ -739,6 +924,10 @@ function startRelay(
     "-sc_threshold",
     "0",
 
+
+    /*
+     * AAC audio.
+     */
     "-c:a",
     "aac",
 
@@ -751,21 +940,28 @@ function startRelay(
     "-ac",
     "2",
 
+
+    /*
+     * YouTube-compatible FLV/RTMPS output.
+     */
     "-f",
     "flv",
 
-    input
+    outputUrl
   ];
+
 
   log(
     `Starting FFmpeg relay: ${ffmpegPath}`
   );
 
+
   log(
     "Output: 720x1280 / H.264 / AAC / 30 FPS"
   );
 
-  const ff =
+
+  const ffmpeg =
     spawn(
       ffmpegPath,
       args,
@@ -778,97 +974,157 @@ function startRelay(
       }
     );
 
-  active.ffmpeg = ff;
 
-  ff.stdout.on("data", (data) => {
+  active.ffmpeg =
+    ffmpeg;
 
-    const text =
-      data.toString().trim();
 
-    if (text) {
-      log(`FFmpeg: ${text}`);
+  /*
+   * FFmpeg stdout.
+   */
+  ffmpeg.stdout.on(
+    "data",
+    (data) => {
+
+      const text =
+        data.toString().trim();
+
+      if (text) {
+
+        log(
+          `FFmpeg: ${text}`
+        );
+      }
     }
-  });
+  );
 
-  ff.stderr.on("data", (data) => {
 
-    const text =
-      data.toString().trim();
+  /*
+   * FFmpeg stderr.
+   *
+   * FFmpeg normally prints most information
+   * to stderr, so this is important.
+   */
+  ffmpeg.stderr.on(
+    "data",
+    (data) => {
 
-    if (text) {
-      log(`FFmpeg: ${text}`);
+      const text =
+        data.toString().trim();
+
+      if (text) {
+
+        log(
+          `FFmpeg: ${text}`
+        );
+      }
     }
-  });
+  );
 
-  ff.on("error", (err) => {
 
-    log(
-      `FFmpeg process error: ${err.message}`
-    );
+  /*
+   * Process failed to start.
+   */
+  ffmpeg.on(
+    "error",
+    (error) => {
 
-    if (active) {
-      active.status = "ERROR";
+      log(
+        `FFmpeg process error: ${error.message}`
+      );
+
+
+      if (active) {
+
+        active.status =
+          "ERROR";
+      }
     }
-  });
+  );
 
-  ff.on("close", (code, signal) => {
 
-    log(
-      `FFmpeg exited code=${code} ` +
-      `signal=${signal || "none"}`
-    );
+  /*
+   * Process stopped.
+   */
+  ffmpeg.on(
+    "close",
+    (code, signal) => {
 
-    if (!active) {
-      return;
+      log(
+        `FFmpeg exited code=${code} ` +
+        `signal=${signal || "none"}`
+      );
+
+
+      if (!active) {
+        return;
+      }
+
+
+      if (
+        code === 0 &&
+        !signal
+      ) {
+
+        active.status =
+          "ENDED";
+
+      } else {
+
+        active.status =
+          "ERROR";
+      }
     }
+  );
 
-    if (
-      code === 0 &&
-      !signal
-    ) {
-      active.status = "ENDED";
-    } else {
-      active.status = "ERROR";
-    }
-  });
 
-  return ff;
+  return ffmpeg;
 }
 
 
-/*
- * Stop active relay.
- */
+/* =========================================================
+   STOP
+========================================================= */
+
 function stopActive() {
 
   if (!active) {
     return;
   }
 
+
   if (
     active.ffmpeg &&
     !active.ffmpeg.killed
   ) {
 
-    active.ffmpeg.kill(
-      "SIGTERM"
-    );
+    try {
+
+      active.ffmpeg.kill(
+        "SIGTERM"
+      );
+
+    } catch (_) {}
   }
 
-  active.status = "STOPPED";
+
+  active.status =
+    "STOPPED";
 }
 
 
-/*
- * Health endpoint.
- */
+/* =========================================================
+   HEALTH
+========================================================= */
+
 app.get(
   "/health",
   (req, res) => {
 
     res.json({
 
-      ok: true,
+      ok:
+        true,
 
       configured:
         ensureConfig().length === 0,
@@ -880,15 +1136,17 @@ app.get(
         !!active,
 
       status:
-        active?.status || "IDLE"
+        active?.status ||
+        "IDLE"
     });
   }
 );
 
 
-/*
- * Status endpoint.
- */
+/* =========================================================
+   STATUS
+========================================================= */
+
 app.get(
   "/api/status",
   (req, res) => {
@@ -899,10 +1157,12 @@ app.get(
         !!oauthTokens,
 
       status:
-        active?.status || "IDLE",
+        active?.status ||
+        "IDLE",
 
       broadcastId:
-        active?.broadcastId || null,
+        active?.broadcastId ||
+        null,
 
       youtubeUrl:
         active?.broadcastId
@@ -910,18 +1170,21 @@ app.get(
           : null,
 
       startedAt:
-        active?.startedAt || null,
+        active?.startedAt ||
+        null,
 
       logs:
-        active?.logs || []
+        active?.logs ||
+        []
     });
   }
 );
 
 
-/*
- * YouTube OAuth start.
- */
+/* =========================================================
+   YOUTUBE OAUTH START
+========================================================= */
+
 app.get(
   "/auth/youtube/start",
   (req, res) => {
@@ -929,7 +1192,10 @@ app.get(
     const missing =
       ensureConfig();
 
-    if (missing.length) {
+
+    if (
+      missing.length
+    ) {
 
       return res
         .status(500)
@@ -939,10 +1205,12 @@ app.get(
         );
     }
 
+
     const client =
       getOAuthClient();
 
-    const url =
+
+    const authUrl =
       client.generateAuthUrl({
 
         access_type:
@@ -955,21 +1223,27 @@ app.get(
           SCOPES
       });
 
-    res.redirect(url);
+
+    res.redirect(
+      authUrl
+    );
   }
 );
 
 
-/*
- * YouTube OAuth callback.
- */
+/* =========================================================
+   YOUTUBE OAUTH CALLBACK
+========================================================= */
+
 app.get(
   "/auth/youtube/callback",
   async (req, res) => {
 
     try {
 
-      if (!req.query.code) {
+      if (
+        !req.query.code
+      ) {
 
         return res
           .status(400)
@@ -978,44 +1252,58 @@ app.get(
           );
       }
 
+
       const client =
         getOAuthClient();
 
-      const { tokens } =
+
+      const result =
         await client.getToken(
           req.query.code
         );
 
+
       oauthTokens =
-        tokens;
+        result.tokens;
+
 
       log(
         "YouTube account authorized."
       );
 
-      res.redirect("/");
 
-    } catch (e) {
+      res.redirect(
+        "/"
+      );
 
-      console.error(e);
+    } catch (error) {
+
+      console.error(
+        error
+      );
+
 
       res
         .status(500)
         .send(
-          `OAuth failed: ${e.message}`
+          `OAuth failed: ${error.message}`
         );
     }
   }
 );
 
 
-/*
- * START LIVE.
- */
+/* =========================================================
+   START LIVE
+========================================================= */
+
 app.post(
   "/api/start",
   async (req, res) => {
 
+    /*
+     * Prevent two simultaneous relays.
+     */
     if (
       active &&
       [
@@ -1029,25 +1317,34 @@ app.post(
       return res
         .status(409)
         .json({
+
           error:
             "A relay is already running."
         });
     }
 
+
+    /*
+     * YouTube must be authorized.
+     */
     if (!oauthTokens) {
 
       return res
         .status(401)
         .json({
+
           error:
             "Authorize YouTube first."
         });
     }
 
+
     const sourceUrl =
       String(
-        req.body.sourceUrl || ""
+        req.body.sourceUrl ||
+        ""
       ).trim();
+
 
     const title =
       String(
@@ -1055,10 +1352,13 @@ app.post(
         "LiveBridge LIVE"
       ).trim();
 
+
     const description =
       String(
-        req.body.description || ""
+        req.body.description ||
+        ""
       ).trim();
+
 
     const privacy =
       [
@@ -1071,29 +1371,42 @@ app.post(
         ? req.body.privacy
         : "unlisted";
 
+
+    /*
+     * Basic Bilibili URL validation.
+     */
     if (
       !/^https?:\/\/(www\.)?live\.bilibili\.com\//i
-        .test(sourceUrl)
+        .test(
+          sourceUrl
+        )
     ) {
 
       return res
         .status(400)
         .json({
+
           error:
             "Enter a live.bilibili.com URL."
         });
     }
+
 
     if (!title) {
 
       return res
         .status(400)
         .json({
+
           error:
             "Enter a title."
         });
     }
 
+
+    /*
+     * Initialize active session.
+     */
     active = {
 
       status:
@@ -1111,96 +1424,114 @@ app.post(
         null
     };
 
-    res.json({
-      ok: true
-    });
 
     /*
-     * Run asynchronously.
+     * Return immediately to browser.
+     */
+    res.json({
+
+      ok:
+        true
+    });
+
+
+    /*
+     * Continue asynchronously.
      */
     (async () => {
 
       try {
 
-        /*
-         * FIRST:
-         * Verify FFmpeg itself works.
-         *
-         * This happens BEFORE YouTube broadcast creation.
-         */
+        /* -----------------------------------------
+           STEP 1 — FFMPEG
+        ----------------------------------------- */
+
         log(
           "Checking FFmpeg runtime..."
         );
 
+
         const ffmpegPath =
           await ensureFFmpeg();
+
 
         await testFFmpeg(
           ffmpegPath
         );
 
-        /*
-         * SECOND:
-         * Resolve the currently-live
-         * Bilibili media URL.
-         */
+
+        /* -----------------------------------------
+           STEP 2 — BILIBILI
+        ----------------------------------------- */
+
         log(
           "Resolving currently-live Bilibili stream..."
         );
+
 
         const liveUrl =
           await resolveLiveUrl(
             sourceUrl
           );
 
+
         log(
           "Bilibili live media URL resolved."
         );
 
-        /*
-         * THIRD:
-         * Create YouTube broadcast.
-         */
+
+        /* -----------------------------------------
+           STEP 3 — YOUTUBE
+        ----------------------------------------- */
+
         log(
           "Creating YouTube broadcast and ingestion stream..."
         );
 
-        const yt =
+
+        const youtube =
           await createYouTubeBroadcast(
             title,
             description,
             privacy
           );
 
+
         active.broadcastId =
-          yt.broadcastId;
+          youtube.broadcastId;
+
 
         log(
           `YouTube broadcast created: ` +
-          `${yt.broadcastId}`
+          `${youtube.broadcastId}`
         );
 
-        /*
-         * FOURTH:
-         * Start real-time relay.
-         */
+
+        /* -----------------------------------------
+           STEP 4 — FFMPEG RELAY
+        ----------------------------------------- */
+
         active.status =
           "LIVE";
+
 
         log(
           "Starting real-time FFmpeg relay..."
         );
 
+
         startRelay(
           liveUrl,
-          yt.ingestionAddress,
-          yt.streamName,
+          youtube.ingestionAddress,
+          youtube.streamName,
           ffmpegPath
         );
 
-        /*
-         * Maximum stream duration.
-         */
+
+        /* -----------------------------------------
+           STEP 5 — MAXIMUM DURATION
+        ----------------------------------------- */
+
         setTimeout(
           () => {
 
@@ -1213,6 +1544,7 @@ app.post(
                 "Maximum stream duration reached; stopping relay."
               );
 
+
               stopActive();
             }
 
@@ -1220,14 +1552,17 @@ app.post(
           MAX_STREAM_SECONDS * 1000
         );
 
-      } catch (e) {
+
+      } catch (error) {
 
         log(
           `START FAILED: ` +
-          `${e.stack || e.message}`
+          `${error.stack || error.message}`
         );
 
+
         if (active) {
+
           active.status =
             "ERROR";
         }
@@ -1238,25 +1573,30 @@ app.post(
 );
 
 
-/*
- * STOP LIVE.
- */
+/* =========================================================
+   STOP LIVE
+========================================================= */
+
 app.post(
   "/api/stop",
   (req, res) => {
 
     stopActive();
 
+
     res.json({
-      ok: true
+
+      ok:
+        true
     });
   }
 );
 
 
-/*
- * Start server.
- */
+/* =========================================================
+   SERVER
+========================================================= */
+
 app.listen(
   PORT,
   "0.0.0.0",
