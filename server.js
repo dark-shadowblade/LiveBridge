@@ -11,16 +11,11 @@ const app = express();
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
-const PORT = 5000;
+const PORT = Number(process.env.PORT || 5000);
+const BASE_URL = (process.env.PUBLIC_BASE_URL || "").replace(/\/+$/, "");
 
-const BASE_URL =
-  (process.env.PUBLIC_BASE_URL || "").replace(/\/+$/, "");
-
-const CLIENT_ID =
-  process.env.GOOGLE_CLIENT_ID || "";
-
-const CLIENT_SECRET =
-  process.env.GOOGLE_CLIENT_SECRET || "";
+const CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
+const CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
 
 const MAX_STREAM_SECONDS = Math.max(
   60,
@@ -30,11 +25,6 @@ const MAX_STREAM_SECONDS = Math.max(
 const OAUTH_REDIRECT =
   `${BASE_URL}/auth/youtube/callback`;
 
-/*
- * IMPORTANT:
- * youtube = YouTube API
- * openid/email/profile = Google account information
- */
 const SCOPES = [
   "https://www.googleapis.com/auth/youtube",
   "openid",
@@ -42,259 +32,39 @@ const SCOPES = [
   "profile"
 ];
 
+const USER_AGENT =
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 " +
+  "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
-/* =========================================================
-   FILES
-========================================================= */
-
-const ACCOUNTS_FILE =
+const accountsPath =
   path.join(__dirname, "accounts.json");
 
 const ytDlpPath =
-  path.join(__dirname, "yt-dlp");
+  path.join(os.tmpdir(), "livebridge-yt-dlp");
 
-const ffmpegBinaryPath =
-  path.join(
-    os.tmpdir(),
-    "livebridge-ffmpeg"
-  );
+const ffmpegPath =
+  path.join(os.tmpdir(), "livebridge-ffmpeg");
 
-
-/* =========================================================
-   FFMPEG
-========================================================= */
-
-const FFMPEG_URL =
-  "https://github.com/binmgr/ffmpeg/releases/latest/download/ffmpeg-linux-amd64";
-
-
-/* =========================================================
-   RUNTIME
-========================================================= */
-
-let accounts = {};
+const caBundlePath =
+  path.join(os.tmpdir(), "livebridge-ca-bundle.pem");
 
 let active = null;
 
 
 /* =========================================================
-   USER AGENT
-========================================================= */
-
-const USER_AGENT =
-  "Mozilla/5.0 " +
-  "(X11; Linux x86_64) " +
-  "AppleWebKit/537.36 " +
-  "(KHTML, like Gecko) " +
-  "Chrome/140.0.0.0 Safari/537.36";
-
-
-/* =========================================================
-   LOAD ACCOUNTS
-========================================================= */
-
-function loadAccounts() {
-
-  try {
-
-    if (
-      fs.existsSync(
-        ACCOUNTS_FILE
-      )
-    ) {
-
-      const data =
-        fs.readFileSync(
-          ACCOUNTS_FILE,
-          "utf8"
-        );
-
-      accounts =
-        JSON.parse(data);
-
-      if (
-        !accounts ||
-        typeof accounts !== "object"
-      ) {
-
-        accounts = {};
-      }
-
-    } else {
-
-      accounts = {};
-    }
-
-  } catch (error) {
-
-    console.error(
-      "Could not load accounts:",
-      error
-    );
-
-    accounts = {};
-  }
-}
-
-loadAccounts();
-
-
-/* =========================================================
-   SAVE ACCOUNTS
-========================================================= */
-
-function saveAccounts() {
-
-  const temp =
-    `${ACCOUNTS_FILE}.tmp`;
-
-  fs.writeFileSync(
-    temp,
-    JSON.stringify(
-      accounts,
-      null,
-      2
-    ),
-    {
-      mode: 0o600
-    }
-  );
-
-  fs.renameSync(
-    temp,
-    ACCOUNTS_FILE
-  );
-}
-
-
-/* =========================================================
-   COOKIES
-========================================================= */
-
-function parseCookies(req) {
-
-  const header =
-    req.headers.cookie || "";
-
-  const result = {};
-
-  for (
-    const part of header.split(";")
-  ) {
-
-    const index =
-      part.indexOf("=");
-
-    if (index === -1) {
-      continue;
-    }
-
-    const key =
-      part.slice(
-        0,
-        index
-      ).trim();
-
-    const value =
-      part.slice(
-        index + 1
-      ).trim();
-
-    if (!key) {
-      continue;
-    }
-
-    result[key] =
-      decodeURIComponent(value);
-  }
-
-  return result;
-}
-
-
-function setAccountCookie(
-  res,
-  accountId
-) {
-
-  res.setHeader(
-    "Set-Cookie",
-    [
-      `lb_account=${encodeURIComponent(accountId)}`,
-      "Path=/",
-      "HttpOnly",
-      "SameSite=Lax",
-      "Max-Age=31536000"
-    ].join("; ")
-  );
-}
-
-
-function clearAccountCookie(
-  res
-) {
-
-  res.setHeader(
-    "Set-Cookie",
-    [
-      "lb_account=",
-      "Path=/",
-      "HttpOnly",
-      "SameSite=Lax",
-      "Max-Age=0"
-    ].join("; ")
-  );
-}
-
-
-/* =========================================================
-   CURRENT ACCOUNT
-========================================================= */
-
-function getCurrentAccountId(
-  req
-) {
-
-  const cookies =
-    parseCookies(req);
-
-  const selected =
-    cookies.lb_account;
-
-  if (
-    selected &&
-    accounts[selected]
-  ) {
-
-    return selected;
-  }
-
-  const first =
-    Object.keys(accounts)[0];
-
-  return first || null;
-}
-
-
-/* =========================================================
-   LOG
+   LOGGING
 ========================================================= */
 
 function log(message) {
-
   const line =
     `[${new Date().toISOString()}] ${message}`;
 
   console.log(line);
 
   if (active) {
-
     active.logs.push(line);
 
-    if (
-      active.logs.length > 300
-    ) {
-
+    if (active.logs.length > 300) {
       active.logs.shift();
     }
   }
@@ -306,25 +76,18 @@ function log(message) {
 ========================================================= */
 
 function ensureConfig() {
-
   const missing = [];
 
   if (!BASE_URL) {
-    missing.push(
-      "PUBLIC_BASE_URL"
-    );
+    missing.push("PUBLIC_BASE_URL");
   }
 
   if (!CLIENT_ID) {
-    missing.push(
-      "GOOGLE_CLIENT_ID"
-    );
+    missing.push("GOOGLE_CLIENT_ID");
   }
 
   if (!CLIENT_SECRET) {
-    missing.push(
-      "GOOGLE_CLIENT_SECRET"
-    );
+    missing.push("GOOGLE_CLIENT_SECRET");
   }
 
   return missing;
@@ -332,11 +95,10 @@ function ensureConfig() {
 
 
 /* =========================================================
-   GOOGLE OAUTH CLIENT
+   GOOGLE OAUTH
 ========================================================= */
 
 function getOAuthClient() {
-
   return new google.auth.OAuth2(
     CLIENT_ID,
     CLIENT_SECRET,
@@ -346,17 +108,185 @@ function getOAuthClient() {
 
 
 /* =========================================================
-   DOWNLOAD
+   ACCOUNT STORAGE
+========================================================= */
+
+function loadAccounts() {
+  try {
+    if (!fs.existsSync(accountsPath)) {
+      return {};
+    }
+
+    const data =
+      JSON.parse(
+        fs.readFileSync(
+          accountsPath,
+          "utf8"
+        )
+      );
+
+    return data &&
+      typeof data === "object"
+      ? data
+      : {};
+
+  } catch (error) {
+    console.error(
+      "Could not read accounts.json:",
+      error.message
+    );
+
+    return {};
+  }
+}
+
+
+function saveAccounts(accounts) {
+  fs.writeFileSync(
+    accountsPath,
+    JSON.stringify(
+      accounts,
+      null,
+      2
+    ),
+    {
+      mode: 0o600
+    }
+  );
+}
+
+
+/* =========================================================
+   COOKIE HELPERS
+========================================================= */
+
+function parseCookies(req) {
+  const result = {};
+
+  const raw =
+    req.headers.cookie || "";
+
+  for (
+    const part of raw.split(";")
+  ) {
+    const index =
+      part.indexOf("=");
+
+    if (index === -1) {
+      continue;
+    }
+
+    const key =
+      part.slice(0, index).trim();
+
+    const value =
+      part.slice(index + 1).trim();
+
+    if (key) {
+      result[key] =
+        decodeURIComponent(value);
+    }
+  }
+
+  return result;
+}
+
+
+function getSelectedAccountId(req) {
+  const cookies =
+    parseCookies(req);
+
+  const accounts =
+    loadAccounts();
+
+  const ids =
+    Object.keys(accounts);
+
+  if (
+    cookies.lb_account &&
+    accounts[cookies.lb_account]
+  ) {
+    return cookies.lb_account;
+  }
+
+  return ids.length
+    ? ids[0]
+    : null;
+}
+
+
+function setSelectedAccount(
+  res,
+  accountId
+) {
+  res.setHeader(
+    "Set-Cookie",
+    `lb_account=${encodeURIComponent(
+      accountId
+    )}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000`
+  );
+}
+
+
+function clearSelectedAccount(res) {
+  res.setHeader(
+    "Set-Cookie",
+    "lb_account=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"
+  );
+}
+
+
+/* =========================================================
+   SAFE ACCOUNT OBJECT
+========================================================= */
+
+function sanitizeAccount(account) {
+  return {
+    id: account.id,
+
+    channelId:
+      account.channelId ||
+      account.id,
+
+    email:
+      account.email ||
+      "",
+
+    name:
+      account.name ||
+      "YouTube channel",
+
+    picture:
+      account.picture ||
+      "",
+
+    channels:
+      Array.isArray(account.channels)
+        ? account.channels
+        : []
+  };
+}
+
+
+/* =========================================================
+   GENERIC HTTPS DOWNLOAD
 ========================================================= */
 
 function downloadFile(
   url,
-  destination
+  destination,
+  redirectCount = 0
 ) {
+  if (redirectCount > 10) {
+    return Promise.reject(
+      new Error(
+        "Too many download redirects."
+      )
+    );
+  }
 
   return new Promise(
     (resolve, reject) => {
-
       const file =
         fs.createWriteStream(
           destination
@@ -368,86 +298,92 @@ function downloadFile(
           {
             headers: {
               "User-Agent":
-                USER_AGENT
+                USER_AGENT,
+
+              Accept:
+                "*/*"
             }
           },
-          (response) => {
 
+          (res) => {
             if (
-              response.statusCode >= 300 &&
-              response.statusCode < 400 &&
-              response.headers.location
+              res.statusCode >= 300 &&
+              res.statusCode < 400 &&
+              res.headers.location
             ) {
-
               file.close();
 
-              try {
-                fs.unlinkSync(
-                  destination
-                );
-              } catch (_) {}
+              fs.unlink(
+                destination,
+                () => {}
+              );
 
               return downloadFile(
                 new URL(
-                  response.headers.location,
+                  res.headers.location,
                   url
                 ).toString(),
-                destination
-              )
-                .then(resolve)
-                .catch(reject);
-            }
 
+                destination,
+
+                redirectCount + 1
+              ).then(
+                resolve,
+                reject
+              );
+            }
 
             if (
-              response.statusCode !== 200
+              res.statusCode !== 200
             ) {
-
               file.close();
 
-              try {
-                fs.unlinkSync(
-                  destination
-                );
-              } catch (_) {}
-
-              reject(
-                new Error(
-                  `Download HTTP ${response.statusCode}`
-                )
+              fs.unlink(
+                destination,
+                () => {}
               );
 
-              return;
+              return reject(
+                new Error(
+                  `Download HTTP ${res.statusCode} from ${url}`
+                )
+              );
             }
 
-
-            response.pipe(file);
-
+            res.pipe(file);
 
             file.on(
               "finish",
               () => {
-
-                file.close(
-                  () => resolve()
-                );
+                file.close(resolve);
               }
             );
           }
         );
 
-
       request.on(
         "error",
         (error) => {
-
           file.close();
 
-          try {
-            fs.unlinkSync(
-              destination
-            );
-          } catch (_) {}
+          fs.unlink(
+            destination,
+            () => {}
+          );
+
+          reject(error);
+        }
+      );
+
+      file.on(
+        "error",
+        (error) => {
+          request.destroy();
+
+          fs.unlink(
+            destination,
+            () => {}
+          );
 
           reject(error);
         }
@@ -458,35 +394,188 @@ function downloadFile(
 
 
 /* =========================================================
+   FILE CHECK
+========================================================= */
+
+function isUsableFile(
+  filePath,
+  minimumBytes = 1024
+) {
+  try {
+    return (
+      fs.existsSync(filePath) &&
+      fs.statSync(filePath).size >=
+        minimumBytes
+    );
+  } catch {
+    return false;
+  }
+}
+
+
+/* =========================================================
+   YT-DLP
+========================================================= */
+
+async function ensureYtDlp() {
+  if (
+    isUsableFile(
+      ytDlpPath,
+      1024 * 1024
+    )
+  ) {
+    return ytDlpPath;
+  }
+
+  log(
+    "Downloading yt-dlp standalone binary..."
+  );
+
+  const url =
+    "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp_linux";
+
+  await downloadFile(
+    url,
+    ytDlpPath
+  );
+
+  fs.chmodSync(
+    ytDlpPath,
+    0o755
+  );
+
+  log("yt-dlp ready.");
+
+  return ytDlpPath;
+}
+
+
+/* =========================================================
+   CA CERTIFICATE BUNDLE
+========================================================= */
+
+function findSystemCABundle() {
+  const candidates = [
+    process.env.SSL_CERT_FILE,
+
+    "/etc/ssl/certs/ca-certificates.crt",
+
+    "/etc/ssl/cert.pem",
+
+    "/etc/pki/tls/certs/ca-bundle.crt",
+
+    "/etc/ssl/certs/ca-bundle.crt",
+
+    "/etc/pki/tls/cacert.pem"
+  ].filter(Boolean);
+
+  for (
+    const candidate of candidates
+  ) {
+    try {
+      if (
+        !fs.existsSync(candidate)
+      ) {
+        continue;
+      }
+
+      const stat =
+        fs.statSync(candidate);
+
+      if (
+        stat.isFile() &&
+        stat.size > 10000
+      ) {
+        return candidate;
+      }
+
+    } catch {}
+  }
+
+  return null;
+}
+
+
+async function ensureCABundle() {
+  const systemBundle =
+    findSystemCABundle();
+
+  if (systemBundle) {
+    log(
+      `Using system CA bundle: ${systemBundle}`
+    );
+
+    return systemBundle;
+  }
+
+  if (
+    isUsableFile(
+      caBundlePath,
+      10000
+    )
+  ) {
+    log(
+      `Using cached CA bundle: ${caBundlePath}`
+    );
+
+    return caBundlePath;
+  }
+
+  log(
+    "No usable system CA bundle found."
+  );
+
+  log(
+    "Downloading Mozilla CA bundle..."
+  );
+
+  await downloadFile(
+    "https://curl.se/ca/cacert.pem",
+    caBundlePath
+  );
+
+  const content =
+    fs.readFileSync(
+      caBundlePath,
+      "utf8"
+    );
+
+  if (
+    content.length < 10000 ||
+    !content.includes(
+      "-----BEGIN CERTIFICATE-----"
+    )
+  ) {
+    fs.unlinkSync(
+      caBundlePath
+    );
+
+    throw new Error(
+      "Downloaded CA bundle is invalid."
+    );
+  }
+
+  log(
+    `CA bundle ready: ${caBundlePath}`
+  );
+
+  return caBundlePath;
+}
+
+
+/* =========================================================
    FFMPEG
 ========================================================= */
 
 async function ensureFFmpeg() {
-
   if (
-    fs.existsSync(
-      ffmpegBinaryPath
+    isUsableFile(
+      ffmpegPath,
+      1024 * 1024
     )
   ) {
-
-    fs.chmodSync(
-      ffmpegBinaryPath,
-      0o755
-    );
-
-    return ffmpegBinaryPath;
+    return ffmpegPath;
   }
-
-
-  if (
-    process.arch !== "x64"
-  ) {
-
-    throw new Error(
-      `Unsupported CPU architecture: ${process.arch}`
-    );
-  }
-
 
   log(
     "Preparing standalone FFmpeg..."
@@ -496,48 +585,38 @@ async function ensureFFmpeg() {
     `FFmpeg architecture: ${process.arch}`
   );
 
+  if (
+    process.arch !== "x64"
+  ) {
+    throw new Error(
+      `Unsupported runtime architecture: ${process.arch}`
+    );
+  }
+
   log(
     "Downloading standalone FFmpeg binary..."
   );
 
-
   await downloadFile(
-    FFMPEG_URL,
-    ffmpegBinaryPath
+    "https://github.com/binmgr/ffmpeg/releases/latest/download/ffmpeg-linux-amd64",
+    ffmpegPath
   );
 
-
   fs.chmodSync(
-    ffmpegBinaryPath,
+    ffmpegPath,
     0o755
   );
 
-
   log(
-    `FFmpeg binary ready: ${ffmpegBinaryPath}`
+    `FFmpeg binary ready: ${ffmpegPath}`
   );
-
-
-  return ffmpegBinaryPath;
-}
-
-
-/* =========================================================
-   FFMPEG TEST
-========================================================= */
-
-async function testFFmpeg(
-  ffmpegPath
-) {
 
   log(
     "Testing FFmpeg binary..."
   );
 
-
-  return new Promise(
+  await new Promise(
     (resolve, reject) => {
-
       const child =
         spawn(
           ffmpegPath,
@@ -554,77 +633,141 @@ async function testFFmpeg(
           }
         );
 
-
-      let stdout = "";
-      let stderr = "";
-
+      let output = "";
 
       child.stdout.on(
         "data",
         (data) => {
-
-          stdout +=
+          output +=
             data.toString();
         }
       );
-
 
       child.stderr.on(
         "data",
         (data) => {
-
-          stderr +=
+          output +=
             data.toString();
         }
       );
 
-
       child.on(
         "error",
-        (error) => {
-
-          reject(
-            new Error(
-              `FFmpeg could not start: ${error.message}`
-            )
-          );
-        }
+        reject
       );
-
 
       child.on(
         "close",
-        (code, signal) => {
-
-          if (
-            code === 0
-          ) {
-
-            const firstLine =
-              stdout
-                .split(/\r?\n/)
-                .find(Boolean) ||
-              "FFmpeg started successfully.";
-
-            log(
-              `FFmpeg self-test OK: ${firstLine}`
+        (code) => {
+          if (code !== 0) {
+            return reject(
+              new Error(
+                `FFmpeg self-test failed with code ${code}.`
+              )
             );
-
-            resolve();
-
-            return;
           }
 
+          const versionLine =
+            output
+              .split(/\r?\n/)
+              .find(
+                (line) =>
+                  line.startsWith(
+                    "ffmpeg version"
+                  )
+              );
 
-          reject(
-            new Error(
-              `FFmpeg self-test failed. ` +
-              `code=${code} ` +
-              `signal=${signal || "none"} ` +
-              `${stderr.trim()}`
-            )
+          log(
+            `FFmpeg self-test OK: ${
+              versionLine || "OK"
+            }`
           );
+
+          resolve();
         }
+      );
+    }
+  );
+
+  return ffmpegPath;
+}
+
+
+/* =========================================================
+   HTTP JSON
+========================================================= */
+
+function httpGetJson(
+  url,
+  headers = {}
+) {
+  return new Promise(
+    (resolve, reject) => {
+      const request =
+        https.get(
+          url,
+          {
+            headers: {
+              "User-Agent":
+                USER_AGENT,
+
+              Accept:
+                "application/json, text/plain, */*",
+
+              ...headers
+            }
+          },
+
+          (res) => {
+            let body = "";
+
+            res.setEncoding(
+              "utf8"
+            );
+
+            res.on(
+              "data",
+              (chunk) => {
+                body += chunk;
+              }
+            );
+
+            res.on(
+              "end",
+              () => {
+                if (
+                  res.statusCode < 200 ||
+                  res.statusCode >= 300
+                ) {
+                  return reject(
+                    new Error(
+                      `HTTP ${res.statusCode}: ${body.slice(
+                        0,
+                        500
+                      )}`
+                    )
+                  );
+                }
+
+                try {
+                  resolve(
+                    JSON.parse(body)
+                  );
+                } catch {
+                  reject(
+                    new Error(
+                      `Invalid JSON from ${url}`
+                    )
+                  );
+                }
+              }
+            );
+          }
+        );
+
+      request.on(
+        "error",
+        reject
       );
     }
   );
@@ -632,87 +775,98 @@ async function testFFmpeg(
 
 
 /* =========================================================
-   YT-DLP
+   FFMPEG LOGGING
 ========================================================= */
 
-async function ensureYtDlp() {
+function spawnLogged(
+  command,
+  args,
+  options = {}
+) {
+  const child =
+    spawn(
+      command,
+      args,
+      {
+        stdio: [
+          "ignore",
+          "pipe",
+          "pipe"
+        ],
+        ...options
+      }
+    );
 
-  if (
-    fs.existsSync(
-      ytDlpPath
-    )
-  ) {
+  child.stdout.on(
+    "data",
+    (data) => {
+      const text =
+        String(data).trim();
 
-    return ytDlpPath;
-  }
-
-
-  log(
-    "Downloading yt-dlp standalone binary..."
+      if (text) {
+        log(
+          `FFmpeg: ${text}`
+        );
+      }
+    }
   );
 
+  child.stderr.on(
+    "data",
+    (data) => {
+      const text =
+        String(data).trim();
 
-  await downloadFile(
-    "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux",
-    ytDlpPath
+      if (text) {
+        log(
+          `FFmpeg: ${text}`
+        );
+      }
+    }
   );
 
-
-  fs.chmodSync(
-    ytDlpPath,
-    0o755
-  );
-
-
-  log(
-    "yt-dlp ready."
-  );
-
-
-  return ytDlpPath;
+  return child;
 }
 
 
 /* =========================================================
-   BILIBILI RESOLVE WITH YT-DLP
+   BILIBILI ROOM ID
 ========================================================= */
 
-async function resolveLiveUrl(
+function getRoomId(
   sourceUrl
 ) {
+  const match =
+    sourceUrl.match(
+      /live\.bilibili\.com\/(?:blanc\/)?(\d+)/i
+    );
 
+  return match
+    ? match[1]
+    : null;
+}
+
+
+/* =========================================================
+   YT-DLP BILIBILI RESOLVER
+========================================================= */
+
+async function resolveWithYtDlp(
+  sourceUrl
+) {
   const ytdlp =
     await ensureYtDlp();
 
-
   return new Promise(
     (resolve, reject) => {
-
       const args = [
-
         "--no-warnings",
-
         "--no-playlist",
-
-        "--add-header",
-        "Referer: https://live.bilibili.com/",
-
-        "--add-header",
-        `User-Agent: ${USER_AGENT}`,
-
         "-f",
         "best",
-
         "-g",
-
         sourceUrl
       ];
-
-
-      log(
-        "Resolving with yt-dlp..."
-      );
-
 
       const child =
         spawn(
@@ -723,79 +877,71 @@ async function resolveLiveUrl(
               "ignore",
               "pipe",
               "pipe"
-            ]
+            ],
+
+            env: {
+              ...process.env,
+
+              LANG:
+                "C.UTF-8",
+
+              LC_ALL:
+                "C.UTF-8"
+            }
           }
         );
 
-
-      let output = "";
-      let errorOutput = "";
-
+      let out = "";
+      let err = "";
 
       child.stdout.on(
         "data",
         (data) => {
-
-          output +=
+          out +=
             data.toString();
         }
       );
-
 
       child.stderr.on(
         "data",
         (data) => {
-
-          errorOutput +=
+          err +=
             data.toString();
         }
       );
-
 
       child.on(
         "error",
         reject
       );
 
-
       child.on(
         "close",
         (code) => {
-
           const urls =
-            output
+            out
               .trim()
               .split(/\r?\n/)
               .map(
-                (x) =>
-                  x.trim()
+                (x) => x.trim()
               )
               .filter(Boolean);
-
 
           if (
             code !== 0 ||
             !urls.length
           ) {
-
-            reject(
+            return reject(
               new Error(
-                `yt-dlp could not resolve the live stream. ` +
-                `${errorOutput.trim()}`
+                `yt-dlp could not resolve the live stream. ${err.trim()}`
               )
             );
-
-            return;
           }
 
-
           resolve({
-
-            url:
-              urls[0],
+            url: urls[0],
 
             headers: {
-
               Referer:
                 sourceUrl,
 
@@ -811,184 +957,55 @@ async function resolveLiveUrl(
 
 
 /* =========================================================
-   JSON HTTP
-========================================================= */
-
-function httpGetJson(
-  url,
-  headers = {}
-) {
-
-  return new Promise(
-    (resolve, reject) => {
-
-      const request =
-        https.get(
-          url,
-          {
-            headers: {
-
-              "User-Agent":
-                USER_AGENT,
-
-              Accept:
-                "application/json, text/plain, */*",
-
-              ...headers
-            }
-          },
-          (response) => {
-
-            let body = "";
-
-            response.setEncoding(
-              "utf8"
-            );
-
-
-            response.on(
-              "data",
-              (chunk) => {
-
-                body +=
-                  chunk;
-              }
-            );
-
-
-            response.on(
-              "end",
-              () => {
-
-                if (
-                  response.statusCode < 200 ||
-                  response.statusCode >= 300
-                ) {
-
-                  reject(
-                    new Error(
-                      `HTTP ${response.statusCode}`
-                    )
-                  );
-
-                  return;
-                }
-
-
-                try {
-
-                  resolve(
-                    JSON.parse(
-                      body
-                    )
-                  );
-
-                } catch {
-
-                  reject(
-                    new Error(
-                      "Invalid JSON response."
-                    )
-                  );
-                }
-              }
-            );
-          }
-        );
-
-
-      request.on(
-        "error",
-        reject
-      );
-    }
-  );
-}
-
-
-/* =========================================================
-   BILIBILI ROOM ID
-========================================================= */
-
-function getRoomId(
-  sourceUrl
-) {
-
-  const match =
-    sourceUrl.match(
-      /live\.bilibili\.com\/(?:blanc\/)?(\d+)/i
-    );
-
-
-  return match
-    ? match[1]
-    : null;
-}
-
-
-/* =========================================================
    BILIBILI API FALLBACK
 ========================================================= */
 
 async function resolveWithBilibiliApi(
   sourceUrl
 ) {
-
   const roomId =
-    getRoomId(
-      sourceUrl
-    );
-
+    getRoomId(sourceUrl);
 
   if (!roomId) {
-
     throw new Error(
       "Could not extract Bilibili room ID."
     );
   }
 
-
   log(
     `Trying Bilibili live API fallback for room ${roomId}...`
   );
 
-
   const room =
     await httpGetJson(
-      `https://api.live.bilibili.com/room/v1/Room/get_info?id=${encodeURIComponent(roomId)}`,
+      `https://api.live.bilibili.com/room/v1/Room/get_info?id=${encodeURIComponent(
+        roomId
+      )}`,
       {
         Referer:
           sourceUrl
       }
     );
 
-
-  if (
-    room.code !== 0
-  ) {
-
+  if (room.code !== 0) {
     throw new Error(
       room.message ||
-      "Bilibili room API error."
+        `Bilibili room API error ${room.code}`
     );
   }
 
-
   const roomData =
     room.data || {};
-
 
   if (
     Number(
       roomData.live_status
     ) !== 1
   ) {
-
     throw new Error(
       "Bilibili room is not currently live."
     );
   }
-
 
   const qualities = [
     30000,
@@ -1000,14 +1017,11 @@ async function resolveWithBilibiliApi(
     80
   ];
 
-
   for (
     const qn of qualities
   ) {
-
     const params =
       new URLSearchParams({
-
         room_id:
           roomId,
 
@@ -1033,7 +1047,6 @@ async function resolveWithBilibiliApi(
           "0,1"
       });
 
-
     const result =
       await httpGetJson(
         `https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo?${params}`,
@@ -1043,21 +1056,19 @@ async function resolveWithBilibiliApi(
         }
       );
 
-
     if (
       result.code !== 0
     ) {
       continue;
     }
 
-
     const streams =
-      result.data
+      result
+        .data
         ?.playurl_info
         ?.playurl
         ?.stream ||
       [];
-
 
     const formats =
       streams.flatMap(
@@ -1065,63 +1076,52 @@ async function resolveWithBilibiliApi(
           stream.format || []
       );
 
-
     for (
-      const format of formats
+      const fmt of formats
     ) {
-
       const codecs =
-        format.codec || [];
-
+        fmt.codec || [];
 
       for (
         const codec of codecs
       ) {
-
         if (
           Number(
             codec.current_qn
           ) !== qn
         ) {
-
           continue;
         }
-
 
         const urlInfo =
           (
             codec.url_info ||
             []
           ).find(
-            (item) =>
-              item.host &&
-              codec.base_url
+            (x) =>
+              x.host &&
+              codec.base_url &&
+              x.extra !== undefined
           );
-
 
         if (!urlInfo) {
           continue;
         }
 
-
         const directUrl =
           `${urlInfo.host}` +
           `${codec.base_url}` +
-          `${urlInfo.extra || ""}`;
-
+          `${urlInfo.extra}`;
 
         log(
           `Bilibili API resolved ${qn} quality.`
         );
 
-
         return {
-
           url:
             directUrl,
 
           headers: {
-
             Referer:
               sourceUrl,
 
@@ -1133,7 +1133,6 @@ async function resolveWithBilibiliApi(
     }
   }
 
-
   throw new Error(
     "Bilibili API returned no playable stream URLs."
   );
@@ -1141,30 +1140,29 @@ async function resolveWithBilibiliApi(
 
 
 /* =========================================================
-   RESOLVE STREAM
+   RESOLVE LIVE STREAM
 ========================================================= */
 
 async function resolveLiveStream(
   sourceUrl
 ) {
-
   try {
+    log(
+      "Resolving with yt-dlp..."
+    );
 
-    return await resolveLiveUrl(
+    return await resolveWithYtDlp(
       sourceUrl
     );
 
   } catch (error) {
-
     log(
       `yt-dlp resolver failed: ${error.message}`
     );
 
-
     log(
       "Falling back to Bilibili's live API..."
     );
-
 
     return await resolveWithBilibiliApi(
       sourceUrl
@@ -1174,138 +1172,103 @@ async function resolveLiveStream(
 
 
 /* =========================================================
-   GET YOUTUBE ACCOUNT INFO
-   FIXED VERSION
+   YOUTUBE ACCOUNT INFO
 ========================================================= */
 
 async function getAccountInfo(
   tokens
 ) {
-
   const auth =
     getOAuthClient();
-
 
   auth.setCredentials(
     tokens
   );
 
-
-  /*
-   * Use YouTube API first.
-   * This does NOT depend on userinfo.
-   */
   const youtube =
     google.youtube({
-
       version:
         "v3",
 
       auth
     });
 
-
-  const channelResponse =
+  const channelsResponse =
     await youtube.channels.list({
-
       part:
         "id,snippet",
 
       mine:
-        true
+        true,
+
+      maxResults:
+        50
     });
 
-
   const channels =
-    channelResponse.data.items ||
-    [];
+    channelsResponse
+      .data
+      .items || [];
 
-
-  if (
-    !channels.length
-  ) {
-
+  if (!channels.length) {
     throw new Error(
-      "Google authorization succeeded, but no YouTube channel was found for this account."
+      "This Google account has no YouTube channel available."
     );
   }
 
-
-  const channel =
-    channels[0];
-
-
-  /*
-   * Default information comes from YouTube.
-   */
   let email = "";
 
   let name =
-    channel.snippet?.title ||
-    "YouTube account";
+    channels[0]
+      .snippet
+      ?.title ||
+    "YouTube channel";
 
   let picture =
-    channel.snippet
+    channels[0]
+      .snippet
       ?.thumbnails
       ?.default
       ?.url ||
-    null;
+    "";
 
-
-  /*
-   * Google profile lookup is optional.
-   *
-   * If it fails, OAuth still succeeds.
-   */
   try {
-
     const oauth2 =
       google.oauth2({
-
-        auth,
-
         version:
-          "v2"
+          "v2",
+
+        auth
       });
 
-
-    const userResponse =
+    const profile =
       await oauth2.userinfo.get();
 
-
-    const user =
-      userResponse.data;
-
-
     email =
-      user.email ||
-      "";
+      profile.data.email ||
+      email;
 
     name =
-      user.name ||
+      profile.data.name ||
       name;
 
     picture =
-      user.picture ||
+      profile.data.picture ||
       picture;
 
   } catch (error) {
-
     console.log(
       "Google profile lookup skipped:",
       error.message
     );
   }
 
-
   return {
-
-    /*
-     * YouTube channel ID is the
-     * stable LiveBridge account ID.
-     */
     id:
-      channel.id,
+      channels[0].id,
+
+    channelId:
+      channels[0].id,
 
     email,
 
@@ -1315,316 +1278,191 @@ async function getAccountInfo(
 
     channels:
       channels.map(
-        (item) => ({
-
+        (channel) => ({
           id:
-            item.id,
+            channel.id,
 
           title:
-            item.snippet
+            channel
+              .snippet
               ?.title ||
             "YouTube channel",
 
-          thumbnail:
-            item.snippet
+          picture:
+            channel
+              .snippet
               ?.thumbnails
               ?.default
               ?.url ||
-            null
+            ""
         })
-      )
+      ),
+
+    tokens
   };
 }
 
 
 /* =========================================================
-   SAVE ACCOUNT
+   SELECTED ACCOUNT
 ========================================================= */
 
-async function saveOAuthAccount(
-  tokens
+async function getSelectedAccount(
+  req
 ) {
+  const accounts =
+    loadAccounts();
 
-  const info =
-    await getAccountInfo(
-      tokens
-    );
+  const id =
+    getSelectedAccountId(req);
 
-
-  const accountId =
-    info.id;
-
-
-  const existing =
-    accounts[accountId] ||
-    {};
-
-
-  accounts[accountId] = {
-
-    id:
-      accountId,
-
-    email:
-      info.email,
-
-    name:
-      info.name,
-
-    picture:
-      info.picture,
-
-    channels:
-      info.channels,
-
-    tokens: {
-
-      /*
-       * Preserve old refresh token if Google
-       * doesn't send a new one.
-       */
-      ...existing.tokens,
-
-      ...tokens
-    },
-
-    updatedAt:
-      new Date().toISOString()
-  };
-
-
-  saveAccounts();
-
-
-  return accounts[accountId];
-}
-
-
-/* =========================================================
-   AUTH CLIENT FOR SAVED ACCOUNT
-========================================================= */
-
-function getAuthForAccount(
-  accountId
-) {
-
-  const account =
-    accounts[accountId];
-
-
-  if (!account) {
-
-    throw new Error(
-      "YouTube account not found."
-    );
+  if (
+    !id ||
+    !accounts[id]
+  ) {
+    return null;
   }
 
+  return accounts[id];
+}
 
+
+/* =========================================================
+   CREATE YOUTUBE BROADCAST
+========================================================= */
+
+async function createYouTubeBroadcast(
+  account,
+  title,
+  description,
+  privacy
+) {
   const auth =
     getOAuthClient();
-
 
   auth.setCredentials(
     account.tokens
   );
 
-
-  /*
-   * Save refreshed access token.
-   */
-  auth.on(
-    "tokens",
-    (newTokens) => {
-
-      if (
-        accounts[accountId]
-      ) {
-
-        accounts[accountId].tokens =
-          {
-            ...accounts[accountId].tokens,
-            ...newTokens
-          };
-
-
-        accounts[accountId].updatedAt =
-          new Date().toISOString();
-
-
-        try {
-
-          saveAccounts();
-
-        } catch (error) {
-
-          console.error(
-            "Could not save refreshed token:",
-            error
-          );
-        }
-      }
-    }
-  );
-
-
-  return auth;
-}
-
-
-/* =========================================================
-   YOUTUBE BROADCAST
-========================================================= */
-
-async function createYouTubeBroadcast(
-  accountId,
-  title,
-  description,
-  privacy
-) {
-
-  const auth =
-    getAuthForAccount(
-      accountId
-    );
-
-
   const youtube =
     google.youtube({
-
       version:
         "v3",
 
       auth
     });
 
-
   const start =
     new Date(
-      Date.now() + 60 * 1000
+      Date.now() + 60_000
     ).toISOString();
 
-
   const broadcastResponse =
-    await youtube.liveBroadcasts.insert({
+    await youtube.liveBroadcasts.insert(
+      {
+        part:
+          "snippet,status,contentDetails",
 
-      part:
-        "snippet,status,contentDetails",
+        requestBody: {
+          snippet: {
+            title:
+              title.slice(
+                0,
+                100
+              ),
 
-      requestBody: {
+            description:
+              (
+                description ||
+                ""
+              ).slice(
+                0,
+                5000
+              ),
 
-        snippet: {
+            scheduledStartTime:
+              start,
 
-          title:
-            title.slice(
-              0,
-              100
-            ),
+            categoryId:
+              "24"
+          },
 
-          description:
-            (
-              description ||
-              ""
-            ).slice(
-              0,
-              5000
-            ),
+          status: {
+            privacyStatus:
+              privacy
+          },
 
-          scheduledStartTime:
-            start,
+          contentDetails: {
+            enableAutoStart:
+              true,
 
-          categoryId:
-            "24"
-        },
+            enableAutoStop:
+              true,
 
+            recordFromStart:
+              true,
 
-        status: {
-
-          privacyStatus:
-            privacy
-        },
-
-
-        contentDetails: {
-
-          enableAutoStart:
-            true,
-
-          enableAutoStop:
-            true,
-
-          recordFromStart:
-            true,
-
-          enableDvr:
-            true
+            enableDvr:
+              true
+          }
         }
       }
-    });
-
+    );
 
   const broadcast =
     broadcastResponse.data;
 
-
   const streamResponse =
-    await youtube.liveStreams.insert({
+    await youtube.liveStreams.insert(
+      {
+        part:
+          "snippet,cdn,contentDetails",
 
-      part:
-        "snippet,cdn,contentDetails",
+        requestBody: {
+          snippet: {
+            title:
+              `${title.slice(
+                0,
+                90
+              )} - LiveBridge`
+          },
 
-      requestBody: {
+          cdn: {
+            ingestionType:
+              "rtmp",
 
-        snippet: {
+            resolution:
+              "720p",
 
-          title:
-            `${title.slice(
-              0,
-              90
-            )} - LiveBridge`
-        },
+            frameRate:
+              "30fps"
+          },
 
-
-        cdn: {
-
-          ingestionType:
-            "rtmp",
-
-          resolution:
-            "720p",
-
-          frameRate:
-            "30fps"
-        },
-
-
-        contentDetails: {
-
-          isReusable:
-            false
+          contentDetails: {
+            isReusable:
+              false
+          }
         }
       }
-    });
-
+    );
 
   const stream =
     streamResponse.data;
 
+  await youtube.liveBroadcasts.bind(
+    {
+      part:
+        "id,snippet,contentDetails,status",
 
-  await youtube.liveBroadcasts.bind({
+      id:
+        broadcast.id,
 
-    part:
-      "id,snippet,contentDetails,status",
-
-    id:
-      broadcast.id,
-
-    streamId:
-      stream.id
-  });
-
+      streamId:
+        stream.id
+    }
+  );
 
   return {
-
     youtube,
 
     broadcastId:
@@ -1634,12 +1472,14 @@ async function createYouTubeBroadcast(
       stream.id,
 
     ingestionAddress:
-      stream.cdn
+      stream
+        .cdn
         .ingestionInfo
         .rtmpsIngestionAddress,
 
     streamName:
-      stream.cdn
+      stream
+        .cdn
         .ingestionInfo
         .streamName
   };
@@ -1647,26 +1487,23 @@ async function createYouTubeBroadcast(
 
 
 /* =========================================================
-   FFMPEG RELAY
+   START FFMPEG REAL-TIME RELAY
 ========================================================= */
 
 function startRelay(
   source,
   ingestionUrl,
   streamName,
-  ffmpegPath
+  ffmpegExecutable,
+  caPath
 ) {
-
   const outputUrl =
     `${ingestionUrl}/${streamName}`;
-
 
   const headers =
     source.headers || {};
 
-
   const args = [
-
     "-hide_banner",
 
     "-loglevel",
@@ -1674,10 +1511,8 @@ function startRelay(
 
     "-nostdin",
 
-
     "-rw_timeout",
     "15000000",
-
 
     "-reconnect",
     "1",
@@ -1688,39 +1523,47 @@ function startRelay(
     "-reconnect_delay_max",
     "10",
 
-
     "-user_agent",
-
     headers["User-Agent"] ||
       USER_AGENT,
 
-
     "-headers",
-
     `Referer: ${
       headers.Referer ||
       "https://live.bilibili.com/"
     }\r\n`,
 
+    /*
+      IMPORTANT:
+      Keep certificate verification ON.
+      The CA bundle fixes FFmpeg's missing
+      certificate trust-store problem.
+    */
+
+    "-tls_verify",
+    "1",
+
+    "-ca_file",
+    caPath,
 
     "-i",
     source.url,
 
-
     /*
-     * 9:16 vertical.
-     */
+      9:16 vertical output
+    */
+
     "-vf",
-
-    "scale=720:1280:" +
-    "force_original_aspect_ratio=decrease," +
-    "pad=720:1280:(ow-iw)/2:(oh-ih)/2," +
-    "format=yuv420p",
-
+    "scale=720:1280:force_original_aspect_ratio=decrease," +
+      "pad=720:1280:(ow-iw)/2:(oh-ih)/2," +
+      "format=yuv420p",
 
     "-r",
     "30",
 
+    /*
+      Video
+    */
 
     "-c:v",
     "libx264",
@@ -1734,7 +1577,6 @@ function startRelay(
     "-pix_fmt",
     "yuv420p",
 
-
     "-b:v",
     "2500k",
 
@@ -1747,6 +1589,9 @@ function startRelay(
     "-bufsize",
     "5000k",
 
+    /*
+      2 second GOP
+    */
 
     "-g",
     "60",
@@ -1757,6 +1602,9 @@ function startRelay(
     "-sc_threshold",
     "0",
 
+    /*
+      Audio
+    */
 
     "-c:a",
     "aac",
@@ -1770,6 +1618,9 @@ function startRelay(
     "-ac",
     "2",
 
+    /*
+      YouTube RTMPS
+    */
 
     "-f",
     "flv",
@@ -1777,148 +1628,81 @@ function startRelay(
     outputUrl
   ];
 
-
   log(
-    `Starting FFmpeg relay: ${ffmpegPath}`
+    `Starting FFmpeg relay: ${ffmpegExecutable}`
   );
 
+  log(
+    `Using CA bundle: ${caPath}`
+  );
 
   log(
     "Output: 720x1280 / H.264 / AAC / 30 FPS"
   );
 
-
-  const ffmpeg =
-    spawn(
-      ffmpegPath,
-      args,
-      {
-        stdio: [
-          "ignore",
-          "pipe",
-          "pipe"
-        ]
-      }
+  const ff =
+    spawnLogged(
+      ffmpegExecutable,
+      args
     );
 
+  if (active) {
+    active.ffmpeg = ff;
+  }
 
-  active.ffmpeg =
-    ffmpeg;
-
-
-  ffmpeg.stdout.on(
-    "data",
-    (data) => {
-
-      const text =
-        data.toString().trim();
-
-      if (text) {
-
-        log(
-          `FFmpeg: ${text}`
-        );
-      }
-    }
-  );
-
-
-  ffmpeg.stderr.on(
-    "data",
-    (data) => {
-
-      const text =
-        data.toString().trim();
-
-      if (text) {
-
-        log(
-          `FFmpeg: ${text}`
-        );
-      }
-    }
-  );
-
-
-  ffmpeg.on(
-    "error",
-    (error) => {
-
-      log(
-        `FFmpeg process error: ${error.message}`
-      );
-
-
-      if (active) {
-
-        active.status =
-          "ERROR";
-      }
-    }
-  );
-
-
-  ffmpeg.on(
+  ff.on(
     "close",
     (code, signal) => {
-
       log(
         `FFmpeg exited code=${code} ` +
         `signal=${signal || "none"}`
       );
 
-
-      if (!active) {
-        return;
-      }
-
-
       if (
-        code === 0 &&
-        !signal
+        active &&
+        active.status === "LIVE"
       ) {
-
         active.status =
           "ENDED";
+      }
+    }
+  );
 
-      } else {
+  ff.on(
+    "error",
+    (error) => {
+      log(
+        `FFmpeg error: ${error.message}`
+      );
 
+      if (active) {
         active.status =
           "ERROR";
       }
     }
   );
 
-
-  return ffmpeg;
+  return ff;
 }
 
 
 /* =========================================================
-   STOP
+   STOP ACTIVE RELAY
 ========================================================= */
 
 function stopActive() {
-
   if (!active) {
     return;
   }
-
 
   if (
     active.ffmpeg &&
     !active.ffmpeg.killed
   ) {
-
-    try {
-
-      active.ffmpeg.kill(
-        "SIGTERM"
-      );
-
-    } catch (_) {}
+    active.ffmpeg.kill(
+      "SIGTERM"
+    );
   }
-
 
   active.status =
     "STOPPED";
@@ -1932,23 +1716,20 @@ function stopActive() {
 app.get(
   "/health",
   (req, res) => {
-
-    const accountId =
-      getCurrentAccountId(
-        req
-      );
-
+    const accounts =
+      loadAccounts();
 
     res.json({
-
       ok:
         true,
 
       configured:
-        ensureConfig().length === 0,
+        ensureConfig()
+          .length === 0,
 
-      authenticated:
-        !!accountId,
+      accounts:
+        Object.keys(accounts)
+          .length,
 
       active:
         !!active,
@@ -1962,265 +1743,160 @@ app.get(
 
 
 /* =========================================================
-   ACCOUNTS
+   ACCOUNTS API
 ========================================================= */
 
 app.get(
   "/api/accounts",
   (req, res) => {
+    const accounts =
+      loadAccounts();
 
-    const currentId =
-      getCurrentAccountId(
-        req
-      );
-
-
-    const list =
-      Object.values(
-        accounts
-      ).map(
-        (account) => ({
-
-          id:
-            account.id,
-
-          email:
-            account.email,
-
-          name:
-            account.name,
-
-          picture:
-            account.picture,
-
-          channels:
-            account.channels ||
-            []
-        })
-      );
-
+    const selectedId =
+      getSelectedAccountId(req);
 
     res.json({
-
       accounts:
-        list,
+        Object.values(accounts)
+          .map(
+            sanitizeAccount
+          ),
 
-      currentAccountId:
-        currentId
+      selectedId
     });
   }
 );
 
-
-/* =========================================================
-   SELECT ACCOUNT
-========================================================= */
 
 app.post(
   "/api/accounts/select",
   (req, res) => {
-
-    const accountId =
+    const id =
       String(
-        req.body.accountId ||
-        ""
+        req.body.id ||
+          ""
       ).trim();
 
+    const accounts =
+      loadAccounts();
 
     if (
-      !accountId ||
-      !accounts[accountId]
+      !id ||
+      !accounts[id]
     ) {
-
       return res
         .status(404)
         .json({
-
           error:
             "YouTube account not found."
         });
     }
 
-
-    if (
-      active &&
-      [
-        "STARTING",
-        "LIVE"
-      ].includes(
-        active.status
-      )
-    ) {
-
-      return res
-        .status(409)
-        .json({
-
-          error:
-            "Stop the current LIVE before switching accounts."
-        });
-    }
-
-
-    setAccountCookie(
+    setSelectedAccount(
       res,
-      accountId
+      id
     );
 
-
     res.json({
-
       ok:
         true,
 
-      accountId
+      selectedId:
+        id,
+
+      account:
+        sanitizeAccount(
+          accounts[id]
+        )
     });
   }
 );
 
-
-/* =========================================================
-   REMOVE ACCOUNT
-========================================================= */
 
 app.post(
   "/api/accounts/remove",
   (req, res) => {
-
-    const accountId =
+    const id =
       String(
-        req.body.accountId ||
-        ""
+        req.body.id ||
+          ""
       ).trim();
 
+    const accounts =
+      loadAccounts();
 
     if (
-      !accountId ||
-      !accounts[accountId]
+      !id ||
+      !accounts[id]
     ) {
-
       return res
         .status(404)
         .json({
-
           error:
             "YouTube account not found."
         });
     }
 
+    delete accounts[id];
+
+    saveAccounts(
+      accounts
+    );
+
+    const remainingIds =
+      Object.keys(accounts);
 
     if (
-      active &&
-      [
-        "STARTING",
-        "LIVE"
-      ].includes(
-        active.status
-      )
+      remainingIds.length
     ) {
-
-      return res
-        .status(409)
-        .json({
-
-          error:
-            "Stop the current LIVE before removing an account."
-        });
-    }
-
-
-    delete accounts[
-      accountId
-    ];
-
-
-    saveAccounts();
-
-
-    const cookies =
-      parseCookies(
-        req
+      setSelectedAccount(
+        res,
+        remainingIds[0]
       );
-
-
-    if (
-      cookies.lb_account ===
-      accountId
-    ) {
-
-      clearAccountCookie(
+    } else {
+      clearSelectedAccount(
         res
       );
     }
 
-
     res.json({
-
       ok:
-        true
+        true,
+
+      selectedId:
+        remainingIds[0] ||
+        null
     });
   }
 );
 
 
 /* =========================================================
-   STATUS
+   STATUS API
 ========================================================= */
 
 app.get(
   "/api/status",
   (req, res) => {
+    const accounts =
+      loadAccounts();
 
-    const accountId =
-      getCurrentAccountId(
-        req
-      );
-
-
-    const account =
-      accountId
-        ? accounts[accountId]
-        : null;
-
-
-    if (
-      accountId &&
-      parseCookies(req).lb_account !==
-        accountId
-    ) {
-
-      setAccountCookie(
-        res,
-        accountId
-      );
-    }
-
+    const selectedId =
+      getSelectedAccountId(req);
 
     res.json({
-
       authenticated:
-        !!account,
+        Object.keys(accounts)
+          .length > 0,
 
-      currentAccount:
-        account
-          ? {
+      selectedId,
 
-              id:
-                account.id,
-
-              email:
-                account.email,
-
-              name:
-                account.name,
-
-              picture:
-                account.picture,
-
-              channels:
-                account.channels ||
-                []
-            }
+      selectedAccount:
+        selectedId &&
+        accounts[selectedId]
+          ? sanitizeAccount(
+              accounts[selectedId]
+            )
           : null,
 
       status:
@@ -2249,50 +1925,43 @@ app.get(
 
 
 /* =========================================================
-   OAUTH START
+   YOUTUBE OAUTH START
 ========================================================= */
 
 app.get(
   "/auth/youtube/start",
   (req, res) => {
-
     const missing =
       ensureConfig();
-
 
     if (
       missing.length
     ) {
-
       return res
         .status(500)
         .send(
-          `Missing environment variables: ` +
-          `${missing.join(", ")}`
+          `Missing environment variables: ${missing.join(
+            ", "
+          )}`
         );
     }
-
 
     const client =
       getOAuthClient();
 
-
-    /*
-     * Always show Google account chooser.
-     */
     const url =
-      client.generateAuthUrl({
+      client.generateAuthUrl(
+        {
+          access_type:
+            "offline",
 
-        access_type:
-          "offline",
+          prompt:
+            "select_account consent",
 
-        prompt:
-          "select_account consent",
-
-        scope:
-          SCOPES
-      });
-
+          scope:
+            SCOPES
+        }
+      );
 
     res.redirect(
       url
@@ -2302,19 +1971,16 @@ app.get(
 
 
 /* =========================================================
-   OAUTH CALLBACK
+   YOUTUBE OAUTH CALLBACK
 ========================================================= */
 
 app.get(
   "/auth/youtube/callback",
   async (req, res) => {
-
     try {
-
       if (
         !req.query.code
       ) {
-
         return res
           .status(400)
           .send(
@@ -2322,39 +1988,58 @@ app.get(
           );
       }
 
-
       const client =
         getOAuthClient();
 
-
-      const result =
+      const {
+        tokens
+      } =
         await client.getToken(
           req.query.code
         );
 
-
-      const tokens =
-        result.tokens;
-
-
-      /*
-       * Identify the YouTube channel.
-       */
       const account =
-        await saveOAuthAccount(
+        await getAccountInfo(
           tokens
         );
 
+      const accounts =
+        loadAccounts();
+
+      const existing =
+        accounts[
+          account.id
+        ];
 
       /*
-       * Automatically select the
-       * newly-added account.
-       */
-      setAccountCookie(
+        Preserve refresh token if Google
+        does not send a new one.
+      */
+
+      if (
+        existing?.tokens
+          ?.refresh_token &&
+        !account.tokens
+          .refresh_token
+      ) {
+        account.tokens
+          .refresh_token =
+          existing.tokens
+            .refresh_token;
+      }
+
+      accounts[
+        account.id
+      ] = account;
+
+      saveAccounts(
+        accounts
+      );
+
+      setSelectedAccount(
         res,
         account.id
       );
-
 
       console.log(
         `YouTube account authorized: ${
@@ -2363,18 +2048,15 @@ app.get(
         }`
       );
 
-
       res.redirect(
         "/"
       );
 
     } catch (error) {
-
       console.error(
         "OAuth callback failed:",
         error
       );
-
 
       res
         .status(500)
@@ -2403,58 +2085,45 @@ app.post(
         active.status
       )
     ) {
-
       return res
         .status(409)
         .json({
-
           error:
             "A relay is already running."
         });
     }
 
-
-    const accountId =
-      getCurrentAccountId(
+    const account =
+      await getSelectedAccount(
         req
       );
 
-
-    if (
-      !accountId ||
-      !accounts[accountId]
-    ) {
-
+    if (!account) {
       return res
         .status(401)
         .json({
-
           error:
-            "Select or authorize a YouTube account first."
+            "Add/authorize a YouTube account first."
         });
     }
-
 
     const sourceUrl =
       String(
         req.body.sourceUrl ||
-        ""
+          ""
       ).trim();
-
 
     const title =
       String(
         req.body.title ||
-        "LiveBridge LIVE"
+          "LiveBridge LIVE"
       ).trim();
-
 
     const description =
       String(
         req.body.description ||
-        ""
+          ""
       ).trim();
-
 
     const privacy =
       [
@@ -2467,45 +2136,50 @@ app.post(
         ? req.body.privacy
         : "unlisted";
 
-
     if (
-      !/^https?:\/\/(www\.)?live\.bilibili\.com\//i
-        .test(
-          sourceUrl
-        )
+      !/^https?:\/\/(www\.)?live\.bilibili\.com\//i.test(
+        sourceUrl
+      )
     ) {
-
       return res
         .status(400)
         .json({
-
           error:
             "Enter a live.bilibili.com URL."
         });
     }
 
-
-    if (!title) {
-
+    if (
+      !getRoomId(
+        sourceUrl
+      )
+    ) {
       return res
         .status(400)
         .json({
+          error:
+            "Enter a Bilibili room URL with a numeric room ID, for example https://live.bilibili.com/21156534"
+        });
+    }
 
+    if (!title) {
+      return res
+        .status(400)
+        .json({
           error:
             "Enter a title."
         });
     }
 
-
     active = {
-
       status:
         "STARTING",
 
       logs: [],
 
       startedAt:
-        new Date().toISOString(),
+        new Date()
+          .toISOString(),
 
       ffmpeg:
         null,
@@ -2513,145 +2187,143 @@ app.post(
       broadcastId:
         null,
 
-      accountId
+      accountId:
+        account.id,
+
+      stopTimer:
+        null
     };
 
+    log(
+      `Using YouTube account: ${
+        account.email ||
+        account.name
+      }`
+    );
+
+    /*
+      Respond immediately to browser.
+      Relay continues in background.
+    */
 
     res.json({
-
       ok:
         true
     });
 
-
     (async () => {
-
       try {
 
-        log(
-          `Using YouTube account: ${
-            accounts[accountId].email ||
-            accounts[accountId].name
-          }`
-        );
-
-
         /*
-         * FFmpeg first.
-         */
+          FFmpeg
+        */
+
         log(
           "Checking FFmpeg runtime..."
         );
 
-
-        const ffmpegPath =
+        const ffmpegExecutable =
           await ensureFFmpeg();
 
+        /*
+          CA certificate fix
+        */
 
-        await testFFmpeg(
-          ffmpegPath
-        );
-
+        const caPath =
+          await ensureCABundle();
 
         /*
-         * Bilibili.
-         */
+          Bilibili
+        */
+
         log(
           "Resolving currently-live Bilibili stream..."
         );
 
-
-        const liveStream =
+        const source =
           await resolveLiveStream(
             sourceUrl
           );
-
 
         log(
           "Bilibili live media URL resolved."
         );
 
-
         /*
-         * YouTube.
-         */
+          YouTube
+        */
+
         log(
           "Creating YouTube broadcast and ingestion stream..."
         );
 
-
-        const youtube =
+        const yt =
           await createYouTubeBroadcast(
-
-            accountId,
-
+            account,
             title,
-
             description,
-
             privacy
           );
 
+        if (!active) {
+          return;
+        }
 
         active.broadcastId =
-          youtube.broadcastId;
+          yt.broadcastId;
 
-
-        log(
-          `YouTube broadcast created: ${
-            youtube.broadcastId
-          }`
-        );
-
-
-        /*
-         * Relay.
-         */
         active.status =
           "LIVE";
 
+        log(
+          `YouTube broadcast created: ${yt.broadcastId}`
+        );
+
+        /*
+          Real-time FFmpeg relay
+        */
 
         log(
           "Starting real-time FFmpeg relay..."
         );
 
-
         startRelay(
+          source,
 
-          liveStream,
+          yt.ingestionAddress,
 
-          youtube.ingestionAddress,
+          yt.streamName,
 
-          youtube.streamName,
+          ffmpegExecutable,
 
-          ffmpegPath
+          caPath
         );
-
 
         /*
-         * Maximum duration.
-         */
-        setTimeout(
-          () => {
+          Maximum stream duration
+        */
 
-            if (
-              active &&
-              active.status ===
-                "LIVE"
-            ) {
+        active.stopTimer =
+          setTimeout(
+            () => {
 
-              log(
-                "Maximum stream duration reached; stopping relay."
-              );
+              if (
+                active &&
+                active.status ===
+                  "LIVE"
+              ) {
+                log(
+                  "Maximum stream duration reached; stopping relay."
+                );
 
+                stopActive();
+              }
 
-              stopActive();
-            }
+            },
 
-          },
-          MAX_STREAM_SECONDS * 1000
-        );
-
+            MAX_STREAM_SECONDS *
+              1000
+          );
 
       } catch (error) {
 
@@ -2662,9 +2334,7 @@ app.post(
           }`
         );
 
-
         if (active) {
-
           active.status =
             "ERROR";
         }
@@ -2683,11 +2353,20 @@ app.post(
   "/api/stop",
   (req, res) => {
 
+    if (
+      active?.stopTimer
+    ) {
+      clearTimeout(
+        active.stopTimer
+      );
+
+      active.stopTimer =
+        null;
+    }
+
     stopActive();
 
-
     res.json({
-
       ok:
         true
     });
@@ -2696,14 +2375,13 @@ app.post(
 
 
 /* =========================================================
-   SERVER
+   START SERVER
 ========================================================= */
 
 app.listen(
   PORT,
   "0.0.0.0",
   () => {
-
     console.log(
       `LiveBridge listening on port ${PORT}`
     );
