@@ -11,7 +11,7 @@ const app = express();
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
-const PORT = Number(process.env.PORT || 3000);
+const PORT = 5000;
 const BASE_URL = (process.env.PUBLIC_BASE_URL || "").replace(/\/+$/, "");
 const CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
 const CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
