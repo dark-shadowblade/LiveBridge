@@ -1551,40 +1551,31 @@ function startRelay(
 
     /*
       9:16 vertical output
-    */
-    "-vf",
-    "fps=30,scale=540:960:force_original_aspect_ratio=decrease,pad=540:960:(ow-iw)/2:(oh-ih)/2,format=yuv420p",
-    "-r",
-    "30",
+  "-vf",
+"fps=30,scale=540:960:force_original_aspect_ratio=decrease,pad=540:960:(ow-iw)/2:(oh-ih)/2,format=yuv420p",
 
-    /*
-      Video
-    */
+"-r",
+"30",
 
-    "-c:v",
-    "libx264",
+"-c:v",
+"libx264",
+"-preset",
+"ultrafast",
+"-tune",
+"zerolatency",
+"-threads",
+"4",
 
-    "-preset",
-    "ultrafast",
-
-    "-tune",
-    "zerolatency",
-
-    "-pix_fmt",
-    "yuv420p",
-
-    "-b:v",
-    "2500k",
-
-    "-minrate",
-    "2500k",
-
-    "-maxrate",
-    "2500k",
-
-    "-bufsize",
-    "5000k",
-
+"-pix_fmt",
+"yuv420p",
+"-b:v",
+"2500k",
+"-minrate",
+"2500k",
+"-maxrate",
+"2500k",
+"-bufsize",
+"5000k",
     /*
       2 second GOP
     */
