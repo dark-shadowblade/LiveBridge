@@ -3,6 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const https = require("https");
+const crypto = require("crypto");
 const { spawn } = require("child_process");
 const { google } = require("googleapis");
 
@@ -13,13 +14,20 @@ app.use(express.static(path.join(__dirname, "public")));
 
 const PORT = 5000;
 
-const BASE_URL = (process.env.PUBLIC_BASE_URL || "").replace(/\/+$/, "");
-const CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
-const CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
+const BASE_URL =
+  (process.env.PUBLIC_BASE_URL || "").replace(/\/+$/, "");
+
+const CLIENT_ID =
+  process.env.GOOGLE_CLIENT_ID || "";
+
+const CLIENT_SECRET =
+  process.env.GOOGLE_CLIENT_SECRET || "";
 
 const MAX_STREAM_SECONDS = Math.max(
   60,
-  Number(process.env.MAX_STREAM_SECONDS || 21600)
+  Number(
+    process.env.MAX_STREAM_SECONDS || 21600
+  )
 );
 
 const OAUTH_REDIRECT =
@@ -29,16 +37,30 @@ const SCOPES = [
   "https://www.googleapis.com/auth/youtube"
 ];
 
-let oauthTokens = null;
+
+/* =========================================================
+   FILE STORAGE
+========================================================= */
+
+const ACCOUNTS_FILE =
+  path.join(
+    __dirname,
+    "accounts.json"
+  );
+
+
+/* =========================================================
+   RUNTIME STATE
+========================================================= */
+
+let accounts = {};
+
 let active = null;
 
 
 /* =========================================================
-   PATHS
+   FFMPEG
 ========================================================= */
-
-const ytDlpPath =
-  path.join(__dirname, "yt-dlp");
 
 const ffmpegBinaryPath =
   path.join(
@@ -46,16 +68,226 @@ const ffmpegBinaryPath =
     "livebridge-ffmpeg"
   );
 
-
-/* =========================================================
-   DIRECT FFMPEG DOWNLOAD
-   No tar
-   No xz
-   No ffmpeg-static
-========================================================= */
-
 const FFMPEG_URL =
   "https://github.com/binmgr/ffmpeg/releases/latest/download/ffmpeg-linux-amd64";
+
+
+/* =========================================================
+   YT-DLP
+========================================================= */
+
+const ytDlpPath =
+  path.join(
+    __dirname,
+    "yt-dlp"
+  );
+
+
+/* =========================================================
+   USER AGENT
+========================================================= */
+
+const USER_AGENT =
+  "Mozilla/5.0 " +
+  "(X11; Linux x86_64) " +
+  "AppleWebKit/537.36 " +
+  "(KHTML, like Gecko) " +
+  "Chrome/140.0.0.0 Safari/537.36";
+
+
+/* =========================================================
+   LOAD ACCOUNTS
+========================================================= */
+
+function loadAccounts() {
+
+  try {
+
+    if (
+      fs.existsSync(
+        ACCOUNTS_FILE
+      )
+    ) {
+
+      const raw =
+        fs.readFileSync(
+          ACCOUNTS_FILE,
+          "utf8"
+        );
+
+      accounts =
+        JSON.parse(raw);
+
+      if (
+        !accounts ||
+        typeof accounts !== "object"
+      ) {
+
+        accounts = {};
+      }
+
+    } else {
+
+      accounts = {};
+    }
+
+  } catch (error) {
+
+    console.error(
+      "Could not load accounts:",
+      error
+    );
+
+    accounts = {};
+  }
+}
+
+
+/* =========================================================
+   SAVE ACCOUNTS
+========================================================= */
+
+function saveAccounts() {
+
+  const tempFile =
+    `${ACCOUNTS_FILE}.tmp`;
+
+  fs.writeFileSync(
+    tempFile,
+    JSON.stringify(
+      accounts,
+      null,
+      2
+    ),
+    {
+      mode: 0o600
+    }
+  );
+
+  fs.renameSync(
+    tempFile,
+    ACCOUNTS_FILE
+  );
+}
+
+
+/* =========================================================
+   INITIAL LOAD
+========================================================= */
+
+loadAccounts();
+
+
+/* =========================================================
+   COOKIE HELPERS
+========================================================= */
+
+function parseCookies(req) {
+
+  const header =
+    req.headers.cookie || "";
+
+  const result = {};
+
+  for (
+    const part of header.split(";")
+  ) {
+
+    const index =
+      part.indexOf("=");
+
+    if (index === -1) {
+      continue;
+    }
+
+    const key =
+      part
+        .slice(0, index)
+        .trim();
+
+    const value =
+      part
+        .slice(index + 1)
+        .trim();
+
+    if (!key) {
+      continue;
+    }
+
+    result[key] =
+      decodeURIComponent(value);
+  }
+
+  return result;
+}
+
+
+function setAccountCookie(
+  res,
+  accountId
+) {
+
+  res.setHeader(
+    "Set-Cookie",
+    [
+      `lb_account=${encodeURIComponent(accountId)}`,
+      "Path=/",
+      "HttpOnly",
+      "SameSite=Lax",
+      "Max-Age=31536000"
+    ].join("; ")
+  );
+}
+
+
+function clearAccountCookie(
+  res
+) {
+
+  res.setHeader(
+    "Set-Cookie",
+    [
+      "lb_account=",
+      "Path=/",
+      "HttpOnly",
+      "SameSite=Lax",
+      "Max-Age=0"
+    ].join("; ")
+  );
+}
+
+
+/* =========================================================
+   CURRENT ACCOUNT
+========================================================= */
+
+function getCurrentAccountId(
+  req
+) {
+
+  const cookies =
+    parseCookies(req);
+
+  const id =
+    cookies.lb_account;
+
+  if (
+    id &&
+    accounts[id]
+  ) {
+
+    return id;
+  }
+
+  /*
+   * If there is no cookie yet,
+   * use the first stored account.
+   */
+  const first =
+    Object.keys(accounts)[0];
+
+  return first || null;
+}
 
 
 /* =========================================================
@@ -73,7 +305,10 @@ function log(message) {
 
     active.logs.push(line);
 
-    if (active.logs.length > 300) {
+    if (
+      active.logs.length > 300
+    ) {
+
       active.logs.shift();
     }
   }
@@ -89,15 +324,21 @@ function ensureConfig() {
   const missing = [];
 
   if (!BASE_URL) {
-    missing.push("PUBLIC_BASE_URL");
+    missing.push(
+      "PUBLIC_BASE_URL"
+    );
   }
 
   if (!CLIENT_ID) {
-    missing.push("GOOGLE_CLIENT_ID");
+    missing.push(
+      "GOOGLE_CLIENT_ID"
+    );
   }
 
   if (!CLIENT_SECRET) {
-    missing.push("GOOGLE_CLIENT_SECRET");
+    missing.push(
+      "GOOGLE_CLIENT_SECRET"
+    );
   }
 
   return missing;
@@ -105,7 +346,7 @@ function ensureConfig() {
 
 
 /* =========================================================
-   GOOGLE OAUTH
+   GOOGLE OAUTH CLIENT
 ========================================================= */
 
 function getOAuthClient() {
@@ -120,7 +361,6 @@ function getOAuthClient() {
 
 /* =========================================================
    DOWNLOAD FILE
-   Handles GitHub redirects
 ========================================================= */
 
 function downloadFile(
@@ -139,10 +379,16 @@ function downloadFile(
       const request =
         https.get(
           url,
+          {
+            headers: {
+              "User-Agent":
+                USER_AGENT
+            }
+          },
           (response) => {
 
             /*
-             * GitHub releases normally redirect.
+             * Follow redirects.
              */
             if (
               response.statusCode >= 300 &&
@@ -159,7 +405,10 @@ function downloadFile(
               } catch (_) {}
 
               return downloadFile(
-                response.headers.location,
+                new URL(
+                  response.headers.location,
+                  url
+                ).toString(),
                 destination
               )
                 .then(resolve)
@@ -227,14 +476,10 @@ function downloadFile(
 
 /* =========================================================
    ENSURE FFMPEG
-   Direct binary — no archive extraction
 ========================================================= */
 
 async function ensureFFmpeg() {
 
-  /*
-   * Already downloaded.
-   */
   if (
     fs.existsSync(
       ffmpegBinaryPath
@@ -250,16 +495,13 @@ async function ensureFFmpeg() {
   }
 
 
-  /*
-   * This build is for Linux x86_64.
-   */
   if (
     process.arch !== "x64"
   ) {
 
     throw new Error(
       `Unsupported CPU architecture: ${process.arch}. ` +
-      `This LiveBridge FFmpeg build requires x86_64.`
+      `This FFmpeg build requires x86_64.`
     );
   }
 
@@ -283,9 +525,6 @@ async function ensureFFmpeg() {
   );
 
 
-  /*
-   * Make executable.
-   */
   fs.chmodSync(
     ffmpegBinaryPath,
     0o755
@@ -303,7 +542,6 @@ async function ensureFFmpeg() {
 
 /* =========================================================
    TEST FFMPEG
-   This happens BEFORE YouTube broadcast creation.
 ========================================================= */
 
 async function testFFmpeg(
@@ -376,7 +614,9 @@ async function testFFmpeg(
         "close",
         (code, signal) => {
 
-          if (code === 0) {
+          if (
+            code === 0
+          ) {
 
             const firstLine =
               stdout
@@ -410,7 +650,7 @@ async function testFFmpeg(
 
 
 /* =========================================================
-   YT-DLP
+   ENSURE YT-DLP
 ========================================================= */
 
 async function ensureYtDlp() {
@@ -456,7 +696,7 @@ async function ensureYtDlp() {
 
 
 /* =========================================================
-   BILIBILI LIVE URL RESOLVER
+   BILIBILI RESOLVER
 ========================================================= */
 
 async function resolveLiveUrl(
@@ -480,11 +720,7 @@ async function resolveLiveUrl(
         "Referer: https://live.bilibili.com/",
 
         "--add-header",
-        "User-Agent: Mozilla/5.0 " +
-        "(Windows NT 10.0; Win64; x64) " +
-        "AppleWebKit/537.36 " +
-        "(KHTML, like Gecko) " +
-        "Chrome/140.0.0.0 Safari/537.36",
+        `User-Agent: ${USER_AGENT}`,
 
         "-f",
         "best",
@@ -540,10 +776,7 @@ async function resolveLiveUrl(
 
       child.on(
         "error",
-        (error) => {
-
-          reject(error);
-        }
+        reject
       );
 
 
@@ -556,15 +789,15 @@ async function resolveLiveUrl(
               .trim()
               .split(/\r?\n/)
               .map(
-                (item) =>
-                  item.trim()
+                (x) =>
+                  x.trim()
               )
               .filter(Boolean);
 
 
           if (
             code !== 0 ||
-            urls.length === 0
+            !urls.length
           ) {
 
             reject(
@@ -578,9 +811,18 @@ async function resolveLiveUrl(
           }
 
 
-          resolve(
-            urls[0]
-          );
+          resolve({
+            url:
+              urls[0],
+
+            headers: {
+              Referer:
+                sourceUrl,
+
+              "User-Agent":
+                USER_AGENT
+            }
+          });
         }
       );
     }
@@ -589,13 +831,375 @@ async function resolveLiveUrl(
 
 
 /* =========================================================
-   YOUTUBE BROADCAST CREATION
+   HTTP JSON
 ========================================================= */
 
-async function createYouTubeBroadcast(
-  title,
-  description,
-  privacy
+function httpGetJson(
+  url,
+  headers = {}
+) {
+
+  return new Promise(
+    (resolve, reject) => {
+
+      const request =
+        https.get(
+          url,
+          {
+            headers: {
+              "User-Agent":
+                USER_AGENT,
+
+              Accept:
+                "application/json, text/plain, */*",
+
+              ...headers
+            }
+          },
+          (response) => {
+
+            let body = "";
+
+
+            response.setEncoding(
+              "utf8"
+            );
+
+
+            response.on(
+              "data",
+              (chunk) => {
+
+                body +=
+                  chunk;
+              }
+            );
+
+
+            response.on(
+              "end",
+              () => {
+
+                if (
+                  response.statusCode < 200 ||
+                  response.statusCode >= 300
+                ) {
+
+                  reject(
+                    new Error(
+                      `HTTP ${response.statusCode}: ` +
+                      `${body.slice(0, 300)}`
+                    )
+                  );
+
+                  return;
+                }
+
+
+                try {
+
+                  resolve(
+                    JSON.parse(
+                      body
+                    )
+                  );
+
+                } catch {
+
+                  reject(
+                    new Error(
+                      `Invalid JSON from ${url}`
+                    )
+                  );
+                }
+              }
+            );
+          }
+        );
+
+
+      request.on(
+        "error",
+        reject
+      );
+    }
+  );
+}
+
+
+/* =========================================================
+   ROOM ID
+========================================================= */
+
+function getRoomId(
+  sourceUrl
+) {
+
+  const match =
+    sourceUrl.match(
+      /live\.bilibili\.com\/(?:blanc\/)?(\d+)/i
+    );
+
+  return match
+    ? match[1]
+    : null;
+}
+
+
+/* =========================================================
+   BILIBILI API FALLBACK
+========================================================= */
+
+async function resolveWithBilibiliApi(
+  sourceUrl
+) {
+
+  const roomId =
+    getRoomId(
+      sourceUrl
+    );
+
+
+  if (!roomId) {
+
+    throw new Error(
+      "Could not extract Bilibili room ID."
+    );
+  }
+
+
+  log(
+    `Trying Bilibili live API fallback for room ${roomId}...`
+  );
+
+
+  const room =
+    await httpGetJson(
+      `https://api.live.bilibili.com/room/v1/Room/get_info?id=${encodeURIComponent(roomId)}`,
+      {
+        Referer:
+          sourceUrl
+      }
+    );
+
+
+  if (
+    room.code !== 0
+  ) {
+
+    throw new Error(
+      room.message ||
+      `Bilibili room API error ${room.code}`
+    );
+  }
+
+
+  const roomData =
+    room.data || {};
+
+
+  if (
+    Number(
+      roomData.live_status
+    ) !== 1
+  ) {
+
+    throw new Error(
+      "Bilibili room is not currently live."
+    );
+  }
+
+
+  const qualities = [
+    30000,
+    20000,
+    10000,
+    400,
+    250,
+    150,
+    80
+  ];
+
+
+  for (
+    const qn of qualities
+  ) {
+
+    const params =
+      new URLSearchParams({
+
+        room_id:
+          roomId,
+
+        qn:
+          String(qn),
+
+        codec:
+          "0,1",
+
+        format:
+          "0,2",
+
+        mask:
+          "0",
+
+        no_playurl:
+          "0",
+
+        platform:
+          "web",
+
+        protocol:
+          "0,1"
+      });
+
+
+    const result =
+      await httpGetJson(
+        `https://api.live.bilibili.com/xlive/web-room/v2/index/getRoomPlayInfo?${params}`,
+        {
+          Referer:
+            sourceUrl
+        }
+      );
+
+
+    if (
+      result.code !== 0
+    ) {
+      continue;
+    }
+
+
+    const streams =
+      result.data
+        ?.playurl_info
+        ?.playurl
+        ?.stream ||
+      [];
+
+
+    const formats =
+      streams.flatMap(
+        (stream) =>
+          stream.format || []
+      );
+
+
+    for (
+      const format of formats
+    ) {
+
+      const codecs =
+        format.codec || [];
+
+
+      for (
+        const codec of codecs
+      ) {
+
+        if (
+          Number(
+            codec.current_qn
+          ) !== qn
+        ) {
+
+          continue;
+        }
+
+
+        const urlInfo =
+          (
+            codec.url_info ||
+            []
+          ).find(
+            (x) =>
+              x.host &&
+              codec.base_url &&
+              x.extra !== undefined
+          );
+
+
+        if (!urlInfo) {
+          continue;
+        }
+
+
+        const directUrl =
+          `${urlInfo.host}` +
+          `${codec.base_url}` +
+          `${urlInfo.extra}`;
+
+
+        log(
+          `Bilibili API resolved ${qn} quality.`
+        );
+
+
+        return {
+
+          url:
+            directUrl,
+
+          headers: {
+
+            Referer:
+              sourceUrl,
+
+            "User-Agent":
+              USER_AGENT
+          }
+        };
+      }
+    }
+  }
+
+
+  throw new Error(
+    "Bilibili API returned no playable stream URLs."
+  );
+}
+
+
+/* =========================================================
+   RESOLVE LIVE STREAM
+========================================================= */
+
+async function resolveLiveStream(
+  sourceUrl
+) {
+
+  try {
+
+    return await resolveLiveUrl(
+      sourceUrl
+    );
+
+  } catch (error) {
+
+    log(
+      `yt-dlp resolver failed: ${error.message}`
+    );
+
+
+    log(
+      "Falling back to Bilibili's live API..."
+    );
+
+
+    return await resolveWithBilibiliApi(
+      sourceUrl
+    );
+  }
+}
+
+
+/* =========================================================
+   ACCOUNT INFORMATION
+========================================================= */
+
+async function getAccountInfo(
+  tokens
 ) {
 
   const auth =
@@ -603,20 +1207,270 @@ async function createYouTubeBroadcast(
 
 
   auth.setCredentials(
-    oauthTokens
+    tokens
   );
 
 
+  const oauth2 =
+    google.oauth2({
+      auth,
+      version: "v2"
+    });
+
+
+  const userResponse =
+    await oauth2.userinfo.get();
+
+
+  const user =
+    userResponse.data;
+
+
+  /*
+   * Get YouTube channel information.
+   */
   const youtube =
     google.youtube({
-      version: "v3",
+      version:
+        "v3",
+
       auth
     });
 
 
+  let channels = [];
+
+
+  try {
+
+    const channelResponse =
+      await youtube.channels.list({
+
+        part:
+          "id,snippet",
+
+        mine:
+          true
+      });
+
+
+    channels =
+      (
+        channelResponse.data.items ||
+        []
+      ).map(
+        (channel) => ({
+
+          id:
+            channel.id,
+
+          title:
+            channel.snippet
+              ?.title ||
+            "YouTube channel",
+
+          thumbnail:
+            channel.snippet
+              ?.thumbnails
+              ?.default
+              ?.url ||
+            null
+        })
+      );
+
+  } catch (error) {
+
+    console.error(
+      "Could not load YouTube channels:",
+      error.message
+    );
+  }
+
+
+  return {
+
+    id:
+      user.id,
+
+    email:
+      user.email ||
+      "",
+
+    name:
+      user.name ||
+      user.email ||
+      "YouTube account",
+
+    picture:
+      user.picture ||
+      null,
+
+    channels
+  };
+}
+
+
+/* =========================================================
+   SAVE / UPDATE ACCOUNT
+========================================================= */
+
+async function saveOAuthAccount(
+  tokens
+) {
+
+  const info =
+    await getAccountInfo(
+      tokens
+    );
+
+
+  const accountId =
+    info.id;
+
+
+  const existing =
+    accounts[accountId] || {};
+
+
+  accounts[accountId] = {
+
+    id:
+      accountId,
+
+    email:
+      info.email,
+
+    name:
+      info.name,
+
+    picture:
+      info.picture,
+
+    channels:
+      info.channels,
+
+    tokens: {
+
+      /*
+       * Keep existing refresh token if Google
+       * does not send a new one.
+       */
+      ...existing.tokens,
+
+      ...tokens
+    },
+
+    updatedAt:
+      new Date().toISOString()
+  };
+
+
+  saveAccounts();
+
+
+  return accounts[accountId];
+}
+
+
+/* =========================================================
+   OAUTH CLIENT FOR ACCOUNT
+========================================================= */
+
+function getAuthForAccount(
+  accountId
+) {
+
+  const account =
+    accounts[accountId];
+
+
+  if (
+    !account
+  ) {
+
+    throw new Error(
+      "YouTube account not found."
+    );
+  }
+
+
+  const auth =
+    getOAuthClient();
+
+
+  auth.setCredentials(
+    account.tokens
+  );
+
+
   /*
-   * Schedule a tiny amount into the future.
+   * Google may refresh the access token.
+   * Save the updated token information.
    */
+  auth.on(
+    "tokens",
+    (newTokens) => {
+
+      if (
+        accounts[accountId]
+      ) {
+
+        accounts[accountId].tokens =
+          {
+            ...accounts[accountId].tokens,
+            ...newTokens
+          };
+
+
+        accounts[accountId].updatedAt =
+          new Date().toISOString();
+
+
+        try {
+          saveAccounts();
+        } catch (error) {
+
+          console.error(
+            "Could not save refreshed token:",
+            error
+          );
+        }
+      }
+    }
+  );
+
+
+  return auth;
+}
+
+
+/* =========================================================
+   YOUTUBE BROADCAST
+========================================================= */
+
+async function createYouTubeBroadcast(
+  accountId,
+  title,
+  description,
+  privacy
+) {
+
+  const auth =
+    getAuthForAccount(
+      accountId
+    );
+
+
+  const youtube =
+    google.youtube({
+
+      version:
+        "v3",
+
+      auth
+    });
+
+
   const start =
     new Date(
       Date.now() + 60 * 1000
@@ -624,7 +1478,7 @@ async function createYouTubeBroadcast(
 
 
   /*
-   * Create broadcast.
+   * Broadcast.
    */
   const broadcastResponse =
     await youtube.liveBroadcasts.insert({
@@ -688,7 +1542,7 @@ async function createYouTubeBroadcast(
 
 
   /*
-   * Create ingestion stream.
+   * Ingestion stream.
    */
   const streamResponse =
     await youtube.liveStreams.insert({
@@ -735,7 +1589,7 @@ async function createYouTubeBroadcast(
 
 
   /*
-   * Bind broadcast to stream.
+   * Bind.
    */
   await youtube.liveBroadcasts.bind({
 
@@ -774,48 +1628,24 @@ async function createYouTubeBroadcast(
 
 
 /* =========================================================
-   START FFMPEG RELAY
+   FFMPEG RELAY
 ========================================================= */
 
 function startRelay(
-  sourceUrl,
+  source,
   ingestionUrl,
   streamName,
   ffmpegPath
 ) {
 
-  /*
-   * YouTube RTMPS URL.
-   */
   const outputUrl =
     `${ingestionUrl}/${streamName}`;
 
 
-  /*
-   * Bilibili HTTP headers.
-   */
   const headers =
-    "Referer: https://live.bilibili.com/\r\n" +
-    "User-Agent: Mozilla/5.0 " +
-    "(Windows NT 10.0; Win64; x64) " +
-    "AppleWebKit/537.36 " +
-    "(KHTML, like Gecko) " +
-    "Chrome/140.0.0.0 Safari/537.36\r\n";
+    source.headers || {};
 
 
-  /*
-   * FFmpeg arguments.
-   *
-   * Source:
-   * Bilibili live stream
-   *
-   * Output:
-   * 720x1280 vertical
-   * H.264
-   * AAC
-   * 30fps
-   * RTMPS
-   */
   const args = [
 
     "-hide_banner",
@@ -826,16 +1656,10 @@ function startRelay(
     "-nostdin",
 
 
-    /*
-     * Network timeout.
-     */
     "-rw_timeout",
     "15000000",
 
 
-    /*
-     * Reconnect source if possible.
-     */
     "-reconnect",
     "1",
 
@@ -846,43 +1670,39 @@ function startRelay(
     "10",
 
 
-    /*
-     * Bilibili request headers.
-     */
+    "-user_agent",
+
+    headers["User-Agent"] ||
+      USER_AGENT,
+
+
     "-headers",
-    headers,
+
+    `Referer: ${
+      headers.Referer ||
+      "https://live.bilibili.com/"
+    }\r\n`,
 
 
-    /*
-     * Input.
-     */
     "-i",
-    sourceUrl,
+    source.url,
 
 
     /*
-     * Vertical 9:16 output.
-     *
-     * The source keeps its aspect ratio.
-     * Empty space is padded.
+     * Vertical output.
      */
     "-vf",
+
     "scale=720:1280:" +
     "force_original_aspect_ratio=decrease," +
     "pad=720:1280:(ow-iw)/2:(oh-ih)/2," +
     "format=yuv420p",
 
 
-    /*
-     * Video frame rate.
-     */
     "-r",
     "30",
 
 
-    /*
-     * H.264 encoder.
-     */
     "-c:v",
     "libx264",
 
@@ -896,9 +1716,6 @@ function startRelay(
     "yuv420p",
 
 
-    /*
-     * Video bitrate.
-     */
     "-b:v",
     "2500k",
 
@@ -913,7 +1730,7 @@ function startRelay(
 
 
     /*
-     * 60 frames = 2 seconds at 30fps.
+     * 2-second keyframes.
      */
     "-g",
     "60",
@@ -925,9 +1742,6 @@ function startRelay(
     "0",
 
 
-    /*
-     * AAC audio.
-     */
     "-c:a",
     "aac",
 
@@ -941,9 +1755,6 @@ function startRelay(
     "2",
 
 
-    /*
-     * YouTube-compatible FLV/RTMPS output.
-     */
     "-f",
     "flv",
 
@@ -979,15 +1790,14 @@ function startRelay(
     ffmpeg;
 
 
-  /*
-   * FFmpeg stdout.
-   */
   ffmpeg.stdout.on(
     "data",
     (data) => {
 
       const text =
-        data.toString().trim();
+        data
+          .toString()
+          .trim();
 
       if (text) {
 
@@ -999,18 +1809,14 @@ function startRelay(
   );
 
 
-  /*
-   * FFmpeg stderr.
-   *
-   * FFmpeg normally prints most information
-   * to stderr, so this is important.
-   */
   ffmpeg.stderr.on(
     "data",
     (data) => {
 
       const text =
-        data.toString().trim();
+        data
+          .toString()
+          .trim();
 
       if (text) {
 
@@ -1022,9 +1828,6 @@ function startRelay(
   );
 
 
-  /*
-   * Process failed to start.
-   */
   ffmpeg.on(
     "error",
     (error) => {
@@ -1043,9 +1846,6 @@ function startRelay(
   );
 
 
-  /*
-   * Process stopped.
-   */
   ffmpeg.on(
     "close",
     (code, signal) => {
@@ -1121,6 +1921,12 @@ app.get(
   "/health",
   (req, res) => {
 
+    const accountId =
+      getCurrentAccountId(
+        req
+      );
+
+
     res.json({
 
       ok:
@@ -1130,7 +1936,7 @@ app.get(
         ensureConfig().length === 0,
 
       authenticated:
-        !!oauthTokens,
+        !!accountId,
 
       active:
         !!active,
@@ -1144,6 +1950,212 @@ app.get(
 
 
 /* =========================================================
+   ACCOUNTS API
+========================================================= */
+
+app.get(
+  "/api/accounts",
+  (req, res) => {
+
+    const currentId =
+      getCurrentAccountId(
+        req
+      );
+
+
+    const list =
+      Object.values(
+        accounts
+      ).map(
+        (account) => ({
+
+          id:
+            account.id,
+
+          email:
+            account.email,
+
+          name:
+            account.name,
+
+          picture:
+            account.picture,
+
+          channels:
+            account.channels ||
+            []
+        })
+      );
+
+
+    res.json({
+
+      accounts:
+        list,
+
+      currentAccountId:
+        currentId
+    });
+  }
+);
+
+
+/* =========================================================
+   SELECT ACCOUNT
+========================================================= */
+
+app.post(
+  "/api/accounts/select",
+  (req, res) => {
+
+    const accountId =
+      String(
+        req.body.accountId ||
+        ""
+      ).trim();
+
+
+    if (
+      !accountId ||
+      !accounts[accountId]
+    ) {
+
+      return res
+        .status(404)
+        .json({
+
+          error:
+            "YouTube account not found."
+        });
+    }
+
+
+    /*
+     * Don't allow account switching while
+     * a relay is running.
+     */
+    if (
+      active &&
+      [
+        "STARTING",
+        "LIVE"
+      ].includes(
+        active.status
+      )
+    ) {
+
+      return res
+        .status(409)
+        .json({
+
+          error:
+            "Stop the current LIVE before switching accounts."
+        });
+    }
+
+
+    setAccountCookie(
+      res,
+      accountId
+    );
+
+
+    res.json({
+
+      ok:
+        true,
+
+      accountId
+    });
+  }
+);
+
+
+/* =========================================================
+   REMOVE ACCOUNT
+========================================================= */
+
+app.post(
+  "/api/accounts/remove",
+  (req, res) => {
+
+    const accountId =
+      String(
+        req.body.accountId ||
+        ""
+      ).trim();
+
+
+    if (
+      !accountId ||
+      !accounts[accountId]
+    ) {
+
+      return res
+        .status(404)
+        .json({
+
+          error:
+            "YouTube account not found."
+        });
+    }
+
+
+    if (
+      active &&
+      [
+        "STARTING",
+        "LIVE"
+      ].includes(
+        active.status
+      )
+    ) {
+
+      return res
+        .status(409)
+        .json({
+
+          error:
+            "Stop the current LIVE before removing an account."
+        });
+    }
+
+
+    delete accounts[
+      accountId
+    ];
+
+
+    saveAccounts();
+
+
+    const cookies =
+      parseCookies(
+        req
+      );
+
+
+    if (
+      cookies.lb_account ===
+      accountId
+    ) {
+
+      clearAccountCookie(
+        res
+      );
+    }
+
+
+    res.json({
+
+      ok:
+        true
+    });
+  }
+);
+
+
+/* =========================================================
    STATUS
 ========================================================= */
 
@@ -1151,10 +2163,61 @@ app.get(
   "/api/status",
   (req, res) => {
 
+    const accountId =
+      getCurrentAccountId(
+        req
+      );
+
+
+    const account =
+      accountId
+        ? accounts[accountId]
+        : null;
+
+
+    /*
+     * If cookie didn't exist yet,
+     * establish it now.
+     */
+    if (
+      accountId &&
+      parseCookies(req).lb_account !==
+        accountId
+    ) {
+
+      setAccountCookie(
+        res,
+        accountId
+      );
+    }
+
+
     res.json({
 
       authenticated:
-        !!oauthTokens,
+        !!account,
+
+      currentAccount:
+        account
+          ? {
+
+              id:
+                account.id,
+
+              email:
+                account.email,
+
+              name:
+                account.name,
+
+              picture:
+                account.picture,
+
+              channels:
+                account.channels ||
+                []
+            }
+          : null,
 
       status:
         active?.status ||
@@ -1182,7 +2245,7 @@ app.get(
 
 
 /* =========================================================
-   YOUTUBE OAUTH START
+   OAUTH START
 ========================================================= */
 
 app.get(
@@ -1210,14 +2273,18 @@ app.get(
       getOAuthClient();
 
 
-    const authUrl =
+    /*
+     * Always show Google's account chooser
+     * when adding an account.
+     */
+    const url =
       client.generateAuthUrl({
 
         access_type:
           "offline",
 
         prompt:
-          "consent",
+          "select_account consent",
 
         scope:
           SCOPES
@@ -1225,14 +2292,14 @@ app.get(
 
 
     res.redirect(
-      authUrl
+      url
     );
   }
 );
 
 
 /* =========================================================
-   YOUTUBE OAUTH CALLBACK
+   OAUTH CALLBACK
 ========================================================= */
 
 app.get(
@@ -1263,12 +2330,32 @@ app.get(
         );
 
 
-      oauthTokens =
+      const tokens =
         result.tokens;
 
 
-      log(
-        "YouTube account authorized."
+      /*
+       * Find the Google account and
+       * its YouTube information.
+       */
+      const account =
+        await saveOAuthAccount(
+          tokens
+        );
+
+
+      /*
+       * Make newly authorized account
+       * the selected account.
+       */
+      setAccountCookie(
+        res,
+        account.id
+      );
+
+
+      console.log(
+        `YouTube account authorized: ${account.email}`
       );
 
 
@@ -1279,6 +2366,7 @@ app.get(
     } catch (error) {
 
       console.error(
+        "OAuth callback failed:",
         error
       );
 
@@ -1302,7 +2390,7 @@ app.post(
   async (req, res) => {
 
     /*
-     * Prevent two simultaneous relays.
+     * Don't allow two simultaneous relays.
      */
     if (
       active &&
@@ -1325,16 +2413,25 @@ app.post(
 
 
     /*
-     * YouTube must be authorized.
+     * Get selected account.
      */
-    if (!oauthTokens) {
+    const accountId =
+      getCurrentAccountId(
+        req
+      );
+
+
+    if (
+      !accountId ||
+      !accounts[accountId]
+    ) {
 
       return res
         .status(401)
         .json({
 
           error:
-            "Authorize YouTube first."
+            "Select or authorize a YouTube account first."
         });
     }
 
@@ -1372,9 +2469,6 @@ app.post(
         : "unlisted";
 
 
-    /*
-     * Basic Bilibili URL validation.
-     */
     if (
       !/^https?:\/\/(www\.)?live\.bilibili\.com\//i
         .test(
@@ -1404,9 +2498,6 @@ app.post(
     }
 
 
-    /*
-     * Initialize active session.
-     */
     active = {
 
       status:
@@ -1421,13 +2512,13 @@ app.post(
         null,
 
       broadcastId:
-        null
+        null,
+
+      accountId:
+        accountId
     };
 
 
-    /*
-     * Return immediately to browser.
-     */
     res.json({
 
       ok:
@@ -1436,15 +2527,22 @@ app.post(
 
 
     /*
-     * Continue asynchronously.
+     * Run asynchronously.
      */
     (async () => {
 
       try {
 
         /* -----------------------------------------
-           STEP 1 — FFMPEG
+           FFMPEG
         ----------------------------------------- */
+
+        log(
+          `Using YouTube account: ${
+            accounts[accountId].email
+          }`
+        );
+
 
         log(
           "Checking FFmpeg runtime..."
@@ -1461,7 +2559,7 @@ app.post(
 
 
         /* -----------------------------------------
-           STEP 2 — BILIBILI
+           BILIBILI
         ----------------------------------------- */
 
         log(
@@ -1469,8 +2567,8 @@ app.post(
         );
 
 
-        const liveUrl =
-          await resolveLiveUrl(
+        const liveStream =
+          await resolveLiveStream(
             sourceUrl
           );
 
@@ -1481,7 +2579,7 @@ app.post(
 
 
         /* -----------------------------------------
-           STEP 3 — YOUTUBE
+           YOUTUBE
         ----------------------------------------- */
 
         log(
@@ -1491,8 +2589,13 @@ app.post(
 
         const youtube =
           await createYouTubeBroadcast(
+
+            accountId,
+
             title,
+
             description,
+
             privacy
           );
 
@@ -1502,13 +2605,14 @@ app.post(
 
 
         log(
-          `YouTube broadcast created: ` +
-          `${youtube.broadcastId}`
+          `YouTube broadcast created: ${
+            youtube.broadcastId
+          }`
         );
 
 
         /* -----------------------------------------
-           STEP 4 — FFMPEG RELAY
+           RELAY
         ----------------------------------------- */
 
         active.status =
@@ -1521,15 +2625,19 @@ app.post(
 
 
         startRelay(
-          liveUrl,
+
+          liveStream,
+
           youtube.ingestionAddress,
+
           youtube.streamName,
+
           ffmpegPath
         );
 
 
         /* -----------------------------------------
-           STEP 5 — MAXIMUM DURATION
+           MAX DURATION
         ----------------------------------------- */
 
         setTimeout(
@@ -1556,8 +2664,10 @@ app.post(
       } catch (error) {
 
         log(
-          `START FAILED: ` +
-          `${error.stack || error.message}`
+          `START FAILED: ${
+            error.stack ||
+            error.message
+          }`
         );
 
 
