@@ -1625,6 +1625,11 @@ function startRelay(
     "-f",
     "flv",
 
+    "-tls_verify",
+    "1",
+    "-ca_file",
+    caPath,
+
     outputUrl
   ];
 
