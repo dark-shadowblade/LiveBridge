@@ -1,195 +1,258 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-
 <head>
-
-  <meta charset="utf-8">
+  <meta charset="UTF-8">
 
   <meta
     name="viewport"
-    content="width=device-width,initial-scale=1"
+    content="width=device-width, initial-scale=1.0"
   >
 
   <title>LiveBridge</title>
 
   <style>
-
-    :root {
-      color-scheme: dark;
-      font-family:
-        system-ui,
-        -apple-system,
-        BlinkMacSystemFont,
-        "Segoe UI",
-        Roboto,
-        sans-serif;
+    * {
+      box-sizing: border-box;
     }
 
     body {
       margin: 0;
-      background: #0b0d12;
-      color: #f4f6fb;
+      background: #090a0f;
+      color: #f4f4f7;
+      font-family:
+        Arial,
+        Helvetica,
+        sans-serif;
     }
 
-    main {
-      max-width: 760px;
+    .container {
+      width: min(100% - 32px, 760px);
       margin: 0 auto;
-      padding: 28px 18px;
+      padding: 50px 0 80px;
     }
 
     h1 {
-      margin: 0 0 6px;
-      font-size: 28px;
+      margin: 0;
+      font-size: 48px;
+      line-height: 1.05;
     }
 
-    .muted {
-      color: #9da5b5;
+    .subtitle {
+      margin-top: 14px;
+      color: #a9abb8;
+      font-size: 21px;
+      line-height: 1.35;
     }
 
     .card {
-      background: #141821;
-      border: 1px solid #252b38;
-      border-radius: 16px;
-      padding: 18px;
-      margin-top: 18px;
+      margin-top: 34px;
+      padding: 34px;
+      border-radius: 28px;
+      background: #151821;
+      border: 1px solid #292d39;
+      box-shadow:
+        0 10px 40px rgba(0,0,0,.25);
     }
 
     label {
       display: block;
-      margin: 14px 0 7px;
-      font-weight: 600;
+      margin-bottom: 12px;
+      font-size: 20px;
+      font-weight: 700;
     }
 
+    select,
     input,
-    textarea,
-    select {
-      box-sizing: border-box;
+    textarea {
       width: 100%;
-      padding: 12px;
-      border-radius: 10px;
-      border: 1px solid #343b4a;
-      background: #0e1118;
-      color: #fff;
-      font-size: 16px;
+      border: 1px solid #3a3e4d;
+      border-radius: 18px;
+      background: #090b10;
+      color: #f5f5f7;
+      padding: 18px 20px;
+      font-size: 18px;
+      outline: none;
+    }
+
+    select:focus,
+    input:focus,
+    textarea:focus {
+      border-color: #7045ff;
     }
 
     textarea {
-      min-height: 90px;
+      min-height: 140px;
       resize: vertical;
+    }
+
+    .field {
+      margin-bottom: 28px;
+    }
+
+    .account-info {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-top: 18px;
+      padding: 14px;
+      border-radius: 16px;
+      background: #0d0f15;
+      border: 1px solid #282c38;
+    }
+
+    .account-picture {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      object-fit: cover;
+      background: #292d39;
+    }
+
+    .account-name {
+      font-size: 17px;
+      font-weight: 700;
+    }
+
+    .account-email {
+      margin-top: 4px;
+      color: #999dab;
+      font-size: 14px;
+      word-break: break-all;
     }
 
     button {
       border: 0;
-      border-radius: 10px;
-      padding: 13px 17px;
-      font-size: 16px;
-      font-weight: 700;
+      border-radius: 18px;
+      padding: 17px 28px;
+      font-size: 18px;
+      font-weight: 800;
       cursor: pointer;
+      color: white;
     }
 
     button:disabled {
-      opacity: 0.5;
+      opacity: .45;
       cursor: not-allowed;
     }
 
     .primary {
-      background: #6d43ff;
-      color: white;
-    }
-
-    .danger {
-      background: #b52f3d;
-      color: white;
+      background: #7042f5;
     }
 
     .secondary {
-      background: #303747;
-      color: white;
+      background: #303746;
     }
 
-    .row {
-      display: flex;
-      gap: 10px;
-      flex-wrap: wrap;
-      margin-top: 16px;
+    .danger {
+      background: #a52b35;
     }
 
-    .account-row {
+    .buttons {
       display: flex;
-      gap: 12px;
-      align-items: center;
+      gap: 18px;
       flex-wrap: wrap;
     }
 
-    .account-info {
-      flex: 1;
-      min-width: 200px;
+    .account-buttons {
+      display: flex;
+      gap: 14px;
+      flex-wrap: wrap;
+      margin-top: 22px;
     }
 
-    .account-name {
-      font-weight: 700;
-      font-size: 16px;
+    .account-buttons .primary {
+      background: #7042f5;
     }
 
-    .account-email {
-      color: #9da5b5;
-      font-size: 13px;
-      margin-top: 3px;
+    .small-text {
+      margin-top: 18px;
+      color: #9da0ae;
+      font-size: 15px;
+      line-height: 1.45;
     }
 
-    .avatar {
-      width: 44px;
-      height: 44px;
-      border-radius: 50%;
-      object-fit: cover;
-      background: #303747;
+    .status-card {
+      margin-top: 34px;
     }
 
     .status {
-      font-weight: 700;
+      font-size: 21px;
+      color: #c2c4cf;
     }
 
-    .success {
-      color: #5de49a;
+    .status strong {
+      color: white;
     }
 
-    .warning {
-      color: #ffc857;
-    }
-
-    pre {
+    .logs {
+      margin-top: 18px;
+      padding: 20px;
+      min-height: 100px;
+      max-height: 380px;
+      overflow-y: auto;
+      border-radius: 18px;
+      background: #050609;
+      color: #d7d8df;
+      font-family:
+        monospace;
+      font-size: 13px;
+      line-height: 1.55;
       white-space: pre-wrap;
       word-break: break-word;
-      max-height: 330px;
-      overflow: auto;
-      background: #090b10;
-      padding: 12px;
-      border-radius: 10px;
-      font-size: 12px;
     }
 
-    a {
-      color: #a990ff;
+    .youtube-link {
+      display: none;
+      margin-top: 18px;
+      padding: 15px;
+      border-radius: 14px;
+      background: #11131a;
+      border: 1px solid #292d39;
     }
 
-    .small {
-      font-size: 12px;
-      color: #9da5b5;
-      margin-top: 8px;
+    .youtube-link a {
+      color: #a889ff;
+      text-decoration: none;
+      word-break: break-all;
     }
 
+    .loading {
+      color: #aeb1bd;
+    }
+
+    @media (max-width: 600px) {
+      .container {
+        width: min(100% - 24px, 760px);
+        padding-top: 40px;
+      }
+
+      h1 {
+        font-size: 42px;
+      }
+
+      .subtitle {
+        font-size: 20px;
+      }
+
+      .card {
+        padding: 24px;
+        border-radius: 24px;
+      }
+
+      button {
+        width: 100%;
+      }
+    }
   </style>
-
 </head>
-
 
 <body>
 
-<main>
+<div class="container">
 
   <h1>LiveBridge</h1>
 
-  <div class="muted">
+  <div class="subtitle">
     Real-time Bilibili LIVE → YouTube vertical LIVE relay
   </div>
 
@@ -200,51 +263,64 @@
 
   <div class="card">
 
-    <div
-      id="authStatus"
-      class="status"
-    >
-      Checking YouTube accounts…
+    <h2>YouTube account</h2>
+
+    <div class="field">
+
+      <select
+        id="accountSelect"
+        disabled
+      >
+        <option>
+          Checking YouTube accounts...
+        </option>
+      </select>
+
     </div>
 
 
-    <label for="accountSelect">
-      YouTube account
-    </label>
-
-
-    <select
-      id="accountSelect"
+    <div
+      id="accountInfo"
+      class="account-info"
+      style="display:none;"
     >
 
-      <option value="">
-        No YouTube account
-      </option>
+      <img
+        id="accountPicture"
+        class="account-picture"
+        alt=""
+      >
 
-    </select>
+      <div>
+        <div
+          id="accountName"
+          class="account-name"
+        >
+        </div>
+
+        <div
+          id="accountEmail"
+          class="account-email"
+        >
+        </div>
+      </div>
+
+    </div>
 
 
-    <div
-      id="selectedAccount"
-      class="account-row"
-      style="margin-top:14px;"
-    ></div>
-
-
-    <div class="row">
+    <div class="account-buttons">
 
       <button
+        id="addAccountButton"
         class="primary"
-        id="addAccount"
         type="button"
       >
         + Add YouTube account
       </button>
 
-
       <button
+        id="removeAccountButton"
         class="secondary"
-        id="removeAccount"
         type="button"
       >
         Remove selected
@@ -253,7 +329,7 @@
     </div>
 
 
-    <div class="small">
+    <div class="small-text">
       Refreshing the page will keep the selected account.
       Add as many Google/YouTube accounts as you need.
     </div>
@@ -262,24 +338,28 @@
 
 
   <!-- =====================================================
-       LIVE FORM
+       LIVE SETTINGS
   ====================================================== -->
 
   <div class="card">
 
-    <form id="form">
+    <div class="field">
 
-      <label for="source">
+      <label for="sourceUrl">
         Bilibili LIVE URL
       </label>
 
       <input
-        id="source"
-        required
-        placeholder="https://live.bilibili.com/..."
-        autocomplete="off"
+        id="sourceUrl"
+        type="url"
+        value="https://live.bilibili.com/21156534"
+        placeholder="https://live.bilibili.com/123456"
       >
 
+    </div>
+
+
+    <div class="field">
 
       <label for="title">
         YouTube Live title
@@ -287,11 +367,15 @@
 
       <input
         id="title"
+        type="text"
         value="LiveBridge LIVE"
         maxlength="100"
-        required
       >
 
+    </div>
+
+
+    <div class="field">
 
       <label for="description">
         Description
@@ -302,6 +386,10 @@
         placeholder="Optional"
       ></textarea>
 
+    </div>
+
+
+    <div class="field">
 
       <label for="privacy">
         Visibility
@@ -313,39 +401,38 @@
           Unlisted — first test
         </option>
 
-        <option value="private">
-          Private
-        </option>
-
         <option value="public">
           Public
         </option>
 
+        <option value="private">
+          Private
+        </option>
+
       </select>
 
-
-      <div class="row">
-
-        <button
-          class="primary"
-          type="submit"
-          id="startButton"
-        >
-          START LIVE
-        </button>
+    </div>
 
 
-        <button
-          class="danger"
-          id="stop"
-          type="button"
-        >
-          STOP
-        </button>
+    <div class="buttons">
 
-      </div>
+      <button
+        id="startButton"
+        class="primary"
+        type="button"
+      >
+        START LIVE
+      </button>
 
-    </form>
+      <button
+        id="stopButton"
+        class="danger"
+        type="button"
+      >
+        STOP
+      </button>
+
+    </div>
 
   </div>
 
@@ -354,74 +441,259 @@
        STATUS
   ====================================================== -->
 
-  <div class="card">
+  <div class="card status-card">
 
-    <div>
+    <div class="status">
       Status:
-      <span
-        id="status"
-        class="status"
-      >
+      <strong id="statusText">
         IDLE
-      </span>
+      </strong>
     </div>
 
 
-    <div id="link"></div>
+    <div
+      id="youtubeLink"
+      class="youtube-link"
+    >
+      YouTube:
+
+      <a
+        id="youtubeLinkAnchor"
+        href="#"
+        target="_blank"
+        rel="noopener"
+      ></a>
+    </div>
 
 
-    <pre id="logs">
-Waiting…
-    </pre>
+    <div
+      id="logs"
+      class="logs"
+    >
+      Waiting...
+    </div>
 
   </div>
 
-</main>
+</div>
 
 
 <script>
-
-const $ =
-  (id) =>
-    document.getElementById(id);
-
-
-let accounts = [];
-
-let currentAccountId = null;
+"use strict";
 
 
 /* =========================================================
-   ESCAPE HTML
+   ELEMENTS
 ========================================================= */
 
-function escapeHtml(
-  value
-) {
+const accountSelect =
+  document.getElementById(
+    "accountSelect"
+  );
 
-  return String(
-    value || ""
-  )
-    .replaceAll(
-      "&",
-      "&amp;"
-    )
-    .replaceAll(
-      "<",
-      "&lt;"
-    )
-    .replaceAll(
-      ">",
-      "&gt;"
-    )
-    .replaceAll(
-      '"',
-      "&quot;"
-    )
-    .replaceAll(
-      "'",
-      "&#039;"
+const accountInfo =
+  document.getElementById(
+    "accountInfo"
+  );
+
+const accountPicture =
+  document.getElementById(
+    "accountPicture"
+  );
+
+const accountName =
+  document.getElementById(
+    "accountName"
+  );
+
+const accountEmail =
+  document.getElementById(
+    "accountEmail"
+  );
+
+const addAccountButton =
+  document.getElementById(
+    "addAccountButton"
+  );
+
+const removeAccountButton =
+  document.getElementById(
+    "removeAccountButton"
+  );
+
+const sourceUrl =
+  document.getElementById(
+    "sourceUrl"
+  );
+
+const title =
+  document.getElementById(
+    "title"
+  );
+
+const description =
+  document.getElementById(
+    "description"
+  );
+
+const privacy =
+  document.getElementById(
+    "privacy"
+  );
+
+const startButton =
+  document.getElementById(
+    "startButton"
+  );
+
+const stopButton =
+  document.getElementById(
+    "stopButton"
+  );
+
+const statusText =
+  document.getElementById(
+    "statusText"
+  );
+
+const logs =
+  document.getElementById(
+    "logs"
+  );
+
+const youtubeLink =
+  document.getElementById(
+    "youtubeLink"
+  );
+
+const youtubeLinkAnchor =
+  document.getElementById(
+    "youtubeLinkAnchor"
+  );
+
+
+/* =========================================================
+   STATE
+========================================================= */
+
+let accounts = [];
+
+
+/*
+  IMPORTANT:
+  We do NOT use a separate selectedAccountId variable
+  for START LIVE.
+
+  The dropdown itself is the source of truth:
+      accountSelect.value
+
+  This fixes the bug where the UI showed an account
+  but START LIVE thought no account was selected.
+*/
+
+
+/* =========================================================
+   API HELPER
+========================================================= */
+
+async function api(
+  url,
+  options = {}
+) {
+  const response =
+    await fetch(
+      url,
+      {
+        credentials:
+          "same-origin",
+
+        ...options,
+
+        headers: {
+          "Content-Type":
+            "application/json",
+
+          ...(options.headers || {})
+        }
+      }
     );
+
+  let data = null;
+
+  try {
+    data =
+      await response.json();
+  } catch {
+    data = {};
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      data.error ||
+      `Request failed: ${response.status}`
+    );
+  }
+
+  return data;
+}
+
+
+/* =========================================================
+   UPDATE ACCOUNT INFO
+========================================================= */
+
+function updateAccountInfo() {
+
+  const id =
+    accountSelect.value;
+
+  const account =
+    accounts.find(
+      (item) =>
+        String(item.id) ===
+        String(id)
+    );
+
+  if (!account) {
+
+    accountInfo.style.display =
+      "none";
+
+    return;
+  }
+
+
+  accountInfo.style.display =
+    "flex";
+
+
+  accountName.textContent =
+    account.name ||
+    "YouTube channel";
+
+
+  accountEmail.textContent =
+    account.email ||
+    "";
+
+
+  if (account.picture) {
+
+    accountPicture.src =
+      account.picture;
+
+    accountPicture.style.display =
+      "block";
+
+  } else {
+
+    accountPicture.removeAttribute(
+      "src"
+    );
+
+    accountPicture.style.display =
+      "none";
+  }
 }
 
 
@@ -431,40 +703,687 @@ function escapeHtml(
 
 async function loadAccounts() {
 
+  accountSelect.disabled =
+    true;
+
   try {
 
-    const response =
-      await fetch(
-        "/api/accounts",
+    const data =
+      await api(
+        "/api/accounts"
+      );
+
+
+    accounts =
+      Array.isArray(
+        data.accounts
+      )
+        ? data.accounts
+        : [];
+
+
+    accountSelect.innerHTML =
+      "";
+
+
+    if (!accounts.length) {
+
+      const option =
+        document.createElement(
+          "option"
+        );
+
+      option.value = "";
+
+      option.textContent =
+        "No YouTube account — add one";
+
+      accountSelect.appendChild(
+        option
+      );
+
+      accountSelect.disabled =
+        true;
+
+      accountInfo.style.display =
+        "none";
+
+      removeAccountButton.disabled =
+        true;
+
+      return;
+    }
+
+
+    /*
+      Build dropdown.
+    */
+
+    for (
+      const account of accounts
+    ) {
+
+      const option =
+        document.createElement(
+          "option"
+        );
+
+      option.value =
+        String(account.id);
+
+      const label =
+        account.name ||
+        account.email ||
+        "YouTube channel";
+
+      if (
+        account.email
+      ) {
+        option.textContent =
+          `${label} — ${account.email}`;
+      } else {
+        option.textContent =
+          label;
+      }
+
+      accountSelect.appendChild(
+        option
+      );
+    }
+
+
+    /*
+      Restore server-selected account.
+    */
+
+    const serverSelectedId =
+      data.selectedId
+        ? String(
+            data.selectedId
+          )
+        : "";
+
+
+    const exists =
+      accounts.some(
+        (account) =>
+          String(account.id) ===
+          serverSelectedId
+      );
+
+
+    if (exists) {
+
+      accountSelect.value =
+        serverSelectedId;
+
+    } else {
+
+      /*
+        Fallback to first account.
+      */
+
+      accountSelect.value =
+        String(
+          accounts[0].id
+        );
+
+      /*
+        Tell server which account
+        is now selected.
+      */
+
+      await selectAccountOnServer(
+        accountSelect.value
+      );
+    }
+
+
+    accountSelect.disabled =
+      false;
+
+    removeAccountButton.disabled =
+      false;
+
+
+    updateAccountInfo();
+
+
+  } catch (error) {
+
+    console.error(
+      "Account loading error:",
+      error
+    );
+
+    accountSelect.innerHTML =
+      "";
+
+    const option =
+      document.createElement(
+        "option"
+      );
+
+    option.value = "";
+
+    option.textContent =
+      "Could not load YouTube accounts";
+
+    accountSelect.appendChild(
+      option
+    );
+
+    accountSelect.disabled =
+      true;
+
+    alert(
+      error.message
+    );
+  }
+}
+
+
+/* =========================================================
+   SELECT ACCOUNT ON SERVER
+========================================================= */
+
+async function selectAccountOnServer(
+  accountId
+) {
+
+  if (!accountId) {
+    return;
+  }
+
+
+  const data =
+    await api(
+      "/api/accounts/select",
+      {
+        method:
+          "POST",
+
+        body:
+          JSON.stringify({
+            id:
+              accountId
+          })
+      }
+    );
+
+
+  /*
+    Re-sync dropdown from server response.
+  */
+
+  if (
+    data.selectedId
+  ) {
+
+    accountSelect.value =
+      String(
+        data.selectedId
+      );
+  }
+
+
+  updateAccountInfo();
+}
+
+
+/* =========================================================
+   DROPDOWN CHANGE
+========================================================= */
+
+accountSelect.addEventListener(
+  "change",
+  async () => {
+
+    /*
+      THIS is the important fix.
+
+      The dropdown value is immediately
+      the selected account.
+    */
+
+    const accountId =
+      accountSelect.value;
+
+
+    updateAccountInfo();
+
+
+    if (!accountId) {
+      return;
+    }
+
+
+    try {
+
+      await selectAccountOnServer(
+        accountId
+      );
+
+    } catch (error) {
+
+      console.error(
+        "Account selection failed:",
+        error
+      );
+
+      alert(
+        `Could not select account: ${error.message}`
+      );
+
+      /*
+        Reload authoritative server state.
+      */
+
+      await loadAccounts();
+    }
+  }
+);
+
+
+/* =========================================================
+   ADD YOUTUBE ACCOUNT
+========================================================= */
+
+addAccountButton.addEventListener(
+  "click",
+  () => {
+
+    window.location.href =
+      "/auth/youtube/start";
+  }
+);
+
+
+/* =========================================================
+   REMOVE SELECTED ACCOUNT
+========================================================= */
+
+removeAccountButton.addEventListener(
+  "click",
+  async () => {
+
+    /*
+      Again, use the actual dropdown value.
+    */
+
+    const accountId =
+      accountSelect.value;
+
+
+    if (!accountId) {
+
+      alert(
+        "No YouTube account is selected."
+      );
+
+      return;
+    }
+
+
+    const account =
+      accounts.find(
+        (item) =>
+          String(item.id) ===
+          String(accountId)
+      );
+
+
+    const accountNameText =
+      account?.name ||
+      account?.email ||
+      "this account";
+
+
+    const confirmed =
+      confirm(
+        `Remove ${accountNameText} from LiveBridge?`
+      );
+
+
+    if (!confirmed) {
+      return;
+    }
+
+
+    try {
+
+      await api(
+        "/api/accounts/remove",
         {
-          cache:
-            "no-store"
+          method:
+            "POST",
+
+          body:
+            JSON.stringify({
+              id:
+                accountId
+            })
         }
       );
 
 
+      await loadAccounts();
+
+
+    } catch (error) {
+
+      alert(
+        `Could not remove account: ${error.message}`
+      );
+    }
+  }
+);
+
+
+/* =========================================================
+   START LIVE
+========================================================= */
+
+startButton.addEventListener(
+  "click",
+  async () => {
+
+    /*
+      CRITICAL FIX:
+      Never use a stale selectedAccountId variable.
+
+      Read directly from the dropdown.
+    */
+
+    const accountId =
+      accountSelect.value;
+
+
+    /*
+      Verify an actual option exists.
+    */
+
+    if (
+      !accountId ||
+      accountSelect.disabled
+    ) {
+
+      alert(
+        "Please select a YouTube account first."
+      );
+
+      return;
+    }
+
+
+    /*
+      Also verify the account exists
+      in our loaded account list.
+    */
+
+    const account =
+      accounts.find(
+        (item) =>
+          String(item.id) ===
+          String(accountId)
+      );
+
+
+    if (!account) {
+
+      alert(
+        "The selected YouTube account could not be found. Please reload the accounts."
+      );
+
+      await loadAccounts();
+
+      return;
+    }
+
+
+    /*
+      Make absolutely sure the server cookie
+      points to the same account before starting.
+    */
+
+    try {
+
+      await selectAccountOnServer(
+        accountId
+      );
+
+    } catch (error) {
+
+      alert(
+        `Could not select YouTube account: ${error.message}`
+      );
+
+      return;
+    }
+
+
+    startButton.disabled =
+      true;
+
+
+    statusText.textContent =
+      "STARTING";
+
+
+    logs.textContent =
+      "Starting LiveBridge...";
+
+
+    try {
+
+      const data =
+        await api(
+          "/api/start",
+          {
+            method:
+              "POST",
+
+            body:
+              JSON.stringify({
+                sourceUrl:
+                  sourceUrl.value.trim(),
+
+                title:
+                  title.value.trim(),
+
+                description:
+                  description.value.trim(),
+
+                privacy:
+                  privacy.value
+              })
+          }
+        );
+
+
+      if (
+        data.ok
+      ) {
+
+        /*
+          Server accepted the request.
+          The status poll will show the
+          actual relay state.
+        */
+
+        await refreshStatus();
+      }
+
+
+    } catch (error) {
+
+      console.error(
+        "Start error:",
+        error
+      );
+
+      alert(
+        error.message
+      );
+
+      await refreshStatus();
+
+    } finally {
+
+      /*
+        Don't permanently disable the button.
+      */
+
+      startButton.disabled =
+        false;
+    }
+  }
+);
+
+
+/* =========================================================
+   STOP LIVE
+========================================================= */
+
+stopButton.addEventListener(
+  "click",
+  async () => {
+
+    try {
+
+      await api(
+        "/api/stop",
+        {
+          method:
+            "POST",
+
+          body:
+            JSON.stringify({})
+        }
+      );
+
+
+      await refreshStatus();
+
+
+    } catch (error) {
+
+      alert(
+        `Could not stop relay: ${error.message}`
+      );
+    }
+  }
+);
+
+
+/* =========================================================
+   STATUS
+========================================================= */
+
+async function refreshStatus() {
+
+  try {
+
     const data =
-      await response.json();
+      await api(
+        "/api/status"
+      );
 
 
-    accounts =
-      data.accounts ||
-      [];
+    statusText.textContent =
+      data.status ||
+      "IDLE";
 
 
-    currentAccountId =
-      data.currentAccountId ||
-      null;
+    if (
+      Array.isArray(
+        data.logs
+      ) &&
+      data.logs.length
+    ) {
+
+      logs.textContent =
+        data.logs.join(
+          "\n"
+        );
+
+      logs.scrollTop =
+        logs.scrollHeight;
+
+    } else {
+
+      logs.textContent =
+        "Waiting...";
+    }
 
 
-    renderAccounts();
+    if (
+      data.youtubeUrl
+    ) {
+
+      youtubeLink.style.display =
+        "block";
+
+      youtubeLinkAnchor.href =
+        data.youtubeUrl;
+
+      youtubeLinkAnchor.textContent =
+        data.youtubeUrl;
+
+    } else {
+
+      youtubeLink.style.display =
+        "none";
+
+      youtubeLinkAnchor.href =
+        "#";
+
+      youtubeLinkAnchor.textContent =
+        "";
+    }
+
+
+    /*
+      If the server reports a selected
+      account, synchronize the dropdown.
+    */
+
+    if (
+      data.selectedId &&
+      accounts.length
+    ) {
+
+      const serverId =
+        String(
+          data.selectedId
+        );
+
+      const exists =
+        accounts.some(
+          (account) =>
+            String(account.id) ===
+            serverId
+        );
+
+
+      if (
+        exists &&
+        accountSelect.value !==
+          serverId
+      ) {
+
+        accountSelect.value =
+          serverId;
+
+        updateAccountInfo();
+      }
+    }
+
 
   } catch (error) {
 
-    $("authStatus").textContent =
-      "Could not load YouTube accounts.";
-
     console.error(
+      "Status refresh failed:",
       error
     );
   }
@@ -472,509 +1391,34 @@ async function loadAccounts() {
 
 
 /* =========================================================
-   RENDER ACCOUNT DROPDOWN
-========================================================= */
-
-function renderAccounts() {
-
-  const select =
-    $("accountSelect");
-
-
-  select.innerHTML = "";
-
-
-  if (
-    accounts.length === 0
-  ) {
-
-    const option =
-      document.createElement(
-        "option"
-      );
-
-    option.value =
-      "";
-
-    option.textContent =
-      "No YouTube account — add one";
-
-    select.appendChild(
-      option
-    );
-
-
-    $("authStatus").textContent =
-      "YouTube not authorized";
-
-    $("selectedAccount").innerHTML =
-      "";
-
-    $("startButton").disabled =
-      true;
-
-    $("removeAccount").disabled =
-      true;
-
-    return;
-  }
-
-
-  $("startButton").disabled =
-    false;
-
-  $("removeAccount").disabled =
-    false;
-
-
-  for (
-    const account of accounts
-  ) {
-
-    const option =
-      document.createElement(
-        "option"
-      );
-
-
-    option.value =
-      account.id;
-
-
-    option.textContent =
-      account.email
-        ? `${account.name} — ${account.email}`
-        : account.name;
-
-
-    if (
-      account.id ===
-      currentAccountId
-    ) {
-
-      option.selected =
-        true;
-    }
-
-
-    select.appendChild(
-      option
-    );
-  }
-
-
-  const current =
-    accounts.find(
-      (account) =>
-        account.id ===
-        currentAccountId
-    );
-
-
-  if (current) {
-
-    $("authStatus").innerHTML =
-      `<span class="success">✓ YouTube authorized</span>`;
-
-
-    const picture =
-      current.picture
-        ? `<img class="avatar" src="${escapeHtml(current.picture)}" alt="">`
-        : `<div class="avatar"></div>`;
-
-
-    $("selectedAccount").innerHTML =
-
-      picture +
-
-      `<div class="account-info">
-        <div class="account-name">
-          ${escapeHtml(current.name)}
-        </div>
-        <div class="account-email">
-          ${escapeHtml(current.email)}
-        </div>
-      </div>`;
-  }
-}
-
-
-/* =========================================================
-   SELECT ACCOUNT
-========================================================= */
-
-$("accountSelect")
-  .addEventListener(
-    "change",
-    async () => {
-
-      const accountId =
-        $("accountSelect")
-          .value;
-
-
-      if (!accountId) {
-        return;
-      }
-
-
-      const response =
-        await fetch(
-          "/api/accounts/select",
-          {
-            method:
-              "POST",
-
-            headers: {
-              "Content-Type":
-                "application/json"
-            },
-
-            body:
-              JSON.stringify({
-                accountId
-              })
-          }
-        );
-
-
-      const data =
-        await response.json();
-
-
-      if (!response.ok) {
-
-        alert(
-          data.error ||
-          "Could not select account."
-        );
-
-        await loadAccounts();
-
-        return;
-      }
-
-
-      currentAccountId =
-        accountId;
-
-
-      renderAccounts();
-
-      await refresh();
-    }
-  );
-
-
-/* =========================================================
-   ADD ACCOUNT
-========================================================= */
-
-$("addAccount")
-  .addEventListener(
-    "click",
-    () => {
-
-      window.location.href =
-        "/auth/youtube/start";
-    }
-  );
-
-
-/* =========================================================
-   REMOVE ACCOUNT
-========================================================= */
-
-$("removeAccount")
-  .addEventListener(
-    "click",
-    async () => {
-
-      const account =
-        accounts.find(
-          (item) =>
-            item.id ===
-            currentAccountId
-        );
-
-
-      if (!account) {
-        return;
-      }
-
-
-      const confirmed =
-        confirm(
-          `Remove ${account.email || account.name} from LiveBridge?`
-        );
-
-
-      if (!confirmed) {
-        return;
-      }
-
-
-      const response =
-        await fetch(
-          "/api/accounts/remove",
-          {
-            method:
-              "POST",
-
-            headers: {
-              "Content-Type":
-                "application/json"
-            },
-
-            body:
-              JSON.stringify({
-                accountId:
-                  account.id
-              })
-          }
-        );
-
-
-      const data =
-        await response.json();
-
-
-      if (!response.ok) {
-
-        alert(
-          data.error ||
-          "Could not remove account."
-        );
-
-        return;
-      }
-
-
-      currentAccountId =
-        null;
-
-
-      await loadAccounts();
-
-      await refresh();
-    }
-  );
-
-
-/* =========================================================
-   REFRESH STATUS
-========================================================= */
-
-async function refresh() {
-
-  try {
-
-    const response =
-      await fetch(
-        "/api/status",
-        {
-          cache:
-            "no-store"
-        }
-      );
-
-
-    const status =
-      await response.json();
-
-
-    $("status").textContent =
-      status.status;
-
-
-    if (
-      status.status ===
-      "LIVE"
-    ) {
-
-      $("status").className =
-        "status success";
-
-    } else if (
-      status.status ===
-      "ERROR"
-    ) {
-
-      $("status").className =
-        "status warning";
-
-    } else {
-
-      $("status").className =
-        "status";
-    }
-
-
-    $("link").innerHTML =
-      status.youtubeUrl
-
-        ? `<p>
-            <a
-              target="_blank"
-              rel="noopener"
-              href="${escapeHtml(status.youtubeUrl)}"
-            >
-              Open YouTube broadcast
-            </a>
-          </p>`
-
-        : "";
-
-
-    $("logs").textContent =
-      (
-        status.logs ||
-        []
-      ).join("\n") ||
-      "Waiting…";
-
-
-  } catch (error) {
-
-    $("logs").textContent =
-      "Dashboard error: " +
-      error.message;
-  }
-}
-
-
-/* =========================================================
-   START LIVE
-========================================================= */
-
-$("form")
-  .addEventListener(
-    "submit",
-    async (event) => {
-
-      event.preventDefault();
-
-
-      if (!currentAccountId) {
-
-        alert(
-          "Please select a YouTube account first."
-        );
-
-        return;
-      }
-
-
-      $("logs").textContent =
-        "Starting…";
-
-
-      const response =
-        await fetch(
-          "/api/start",
-          {
-            method:
-              "POST",
-
-            headers: {
-              "Content-Type":
-                "application/json"
-            },
-
-            body:
-              JSON.stringify({
-
-                sourceUrl:
-                  $("source")
-                    .value
-                    .trim(),
-
-                title:
-                  $("title")
-                    .value
-                    .trim(),
-
-                description:
-                  $("description")
-                    .value
-                    .trim(),
-
-                privacy:
-                  $("privacy")
-                    .value
-              })
-          }
-        );
-
-
-      const data =
-        await response.json();
-
-
-      if (
-        !response.ok
-      ) {
-
-        $("logs").textContent =
-          data.error ||
-          "Start failed.";
-
-        return;
-      }
-
-
-      refresh();
-    }
-  );
-
-
-/* =========================================================
-   STOP
-========================================================= */
-
-$("stop")
-  .addEventListener(
-    "click",
-    async () => {
-
-      await fetch(
-        "/api/stop",
-        {
-          method:
-            "POST"
-        }
-      );
-
-
-      refresh();
-    }
-  );
-
-
-/* =========================================================
    INITIAL LOAD
 ========================================================= */
 
-(async () => {
+async function initialize() {
 
   await loadAccounts();
 
-  await refresh();
-
-})();
+  await refreshStatus();
+}
 
 
 /* =========================================================
-   STATUS POLLING
+   AUTO REFRESH
 ========================================================= */
 
 setInterval(
-  refresh,
+  refreshStatus,
   3000
 );
+
+
+/* =========================================================
+   START
+========================================================= */
+
+initialize();
 
 </script>
 
 </body>
-
 </html>
